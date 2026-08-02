@@ -358,6 +358,11 @@ impl<G: Gatt> Session<G> {
             .await
     }
 
+    pub async fn operation_mode(&self) -> Result<p::OperationMode> {
+        let raw = self.gatt.read(p::CHAR_OPERATION_MODE).await?;
+        p::OperationMode::from_i8(p::decode_sint8(p::CHAR_OPERATION_MODE, &raw)?)
+    }
+
     pub async fn battery(&self) -> Result<p::BatteryLevel> {
         p::decode_battery_level(&self.gatt.read(p::CHAR_BATTERY_LEVEL).await?)
     }
@@ -399,18 +404,29 @@ impl<G: Gatt> Session<G> {
 
     // -- composite operations ---------------------------------------------
 
-    /// Bring the camera out of Off/Sleep, returning the power state it was in.
+    /// Bring the camera up, reporting whether gr3sync is what woke it.
     ///
-    /// The caller needs the previous state to decide whether to power the
-    /// camera down afterwards: a camera the user switched on by hand must not
-    /// be turned off by a background sync.
-    pub async fn wake(&self, settle: Duration) -> Result<p::CameraPower> {
-        let previous = self.power().await?;
-        if previous != p::CameraPower::On {
+    /// The caller needs that answer to decide whether to power the camera down
+    /// afterwards: a camera the user switched on by hand must not be turned off
+    /// by a background sync.
+    ///
+    /// `Camera Power` cannot answer it. Connecting over BLE wakes the camera,
+    /// so by the time the characteristic can be read it says `On` no matter
+    /// what state the body was in — verified against a GR IIIx whose owner
+    /// confirmed it was switched off. Reading it and comparing against `On`
+    /// made the answer permanently "the user did", which left `power_off`
+    /// unreachable.
+    ///
+    /// `Operation Mode` does answer it. The camera reports `BleStartup` when
+    /// Bluetooth is why it is awake, and `Capture` when someone is holding it.
+    /// Both observed on the same body.
+    pub async fn wake(&self, settle: Duration) -> Result<bool> {
+        let ours = self.operation_mode().await? == p::OperationMode::BleStartup;
+        if self.power().await? != p::CameraPower::On {
             self.set_power(p::CameraPower::On).await?;
             tokio::time::sleep(settle).await;
         }
-        Ok(previous)
+        Ok(ours)
     }
 
     /// Raise the camera's access point and read back how to join it.
@@ -460,6 +476,13 @@ mod tests {
                 values.insert(p::CHAR_FIRMWARE_REVISION, b"1.90".to_vec());
                 values.insert(p::CHAR_SERIAL_NUMBER, b"01234567".to_vec());
                 values.insert(p::CHAR_CAMERA_POWER, vec![0]);
+                // A camera that is off is, by the time a GATT read reaches it,
+                // awake because Bluetooth woke it. `Capture` beside a power of
+                // `Off` is a pair no real camera reports.
+                values.insert(
+                    p::CHAR_OPERATION_MODE,
+                    vec![p::OperationMode::BleStartup.as_i8() as u8],
+                );
                 values.insert(p::CHAR_BATTERY_LEVEL, vec![0x58, 0x00]);
                 values.insert(p::CHAR_NETWORK_TYPE, vec![0]);
                 values.insert(p::CHAR_SSID, b"GR_4CF5C6".to_vec());
@@ -622,8 +645,7 @@ mod tests {
     #[test]
     fn wake_powers_on_a_camera_that_was_off() {
         let session = session();
-        let previous = block_on(session.wake(Duration::ZERO)).unwrap();
-        assert_eq!(previous, p::CameraPower::Off);
+        assert!(block_on(session.wake(Duration::ZERO)).unwrap());
         assert!(session
             .gatt()
             .writes()
@@ -634,21 +656,33 @@ mod tests {
     fn wake_does_not_write_to_a_camera_that_is_already_on() {
         let session = session();
         session.gatt().set(p::CHAR_CAMERA_POWER, vec![1]);
-        assert_eq!(
-            block_on(session.wake(Duration::ZERO)).unwrap(),
-            p::CameraPower::On
-        );
+        assert!(block_on(session.wake(Duration::ZERO)).unwrap());
         assert!(session.gatt().writes().is_empty());
     }
 
     #[test]
-    fn wake_reports_sleep_as_a_state_we_woke_from() {
+    fn a_camera_in_the_users_hands_is_not_ours_to_switch_off() {
+        // `Capture` means somebody is holding it. Reported `On` either way,
+        // which is why power alone cannot answer this.
         let session = session();
-        session.gatt().set(p::CHAR_CAMERA_POWER, vec![2]);
-        assert_eq!(
-            block_on(session.wake(Duration::ZERO)).unwrap(),
-            p::CameraPower::Sleep
+        session.gatt().set(
+            p::CHAR_OPERATION_MODE,
+            vec![p::OperationMode::Capture.as_i8() as u8],
         );
+        session.gatt().set(p::CHAR_CAMERA_POWER, vec![1]);
+        assert!(!block_on(session.wake(Duration::ZERO)).unwrap());
+    }
+
+    #[test]
+    fn wake_still_powers_up_a_camera_it_did_not_wake() {
+        // Playback: the user has it, but it must still be On for the sync.
+        let session = session();
+        session.gatt().set(
+            p::CHAR_OPERATION_MODE,
+            vec![p::OperationMode::Playback.as_i8() as u8],
+        );
+        session.gatt().set(p::CHAR_CAMERA_POWER, vec![2]);
+        assert!(!block_on(session.wake(Duration::ZERO)).unwrap());
         assert!(session
             .gatt()
             .writes()
