@@ -199,6 +199,13 @@ impl GattTable {
     /// Characteristics the camera did not expose are dropped, which is the
     /// point: a test against this table then fails the same way the real
     /// camera would.
+    ///
+    /// Write permission comes from the `properties` the report recorded. A
+    /// report that predates them leaves everything read-only rather than
+    /// everything writable: an emulator that refuses a write gr3sync should be
+    /// allowed to make fails a test where you can see it, while one that
+    /// accepts a write the camera would refuse hides exactly the bug the
+    /// read-only guard exists to catch.
     pub fn from_doctor_report(report: &serde_json::Value) -> Result<Self, String> {
         let rows = report
             .get("documented")
@@ -217,6 +224,10 @@ impl GattTable {
             let Some(uuid) = row.get("uuid").and_then(|u| u.as_str()) else {
                 continue;
             };
+            let writable = row
+                .pointer("/properties/write")
+                .and_then(|w| w.as_bool())
+                .unwrap_or(false);
             let Some(hex) = row.pointer("/value/hex").and_then(|h| h.as_str()) else {
                 // Exposed but unreadable: keep it present with no value rather
                 // than inventing one.
@@ -226,7 +237,7 @@ impl GattTable {
                         name: row.get("name").and_then(|n| n.as_str()).map(String::from),
                         service: service_from_row(row, uuid),
                         value: String::new(),
-                        writable: true,
+                        writable,
                     },
                 );
                 continue;
@@ -237,7 +248,7 @@ impl GattTable {
                     name: row.get("name").and_then(|n| n.as_str()).map(String::from),
                     service: service_from_row(row, uuid),
                     value: hex.to_string(),
-                    writable: true,
+                    writable,
                 },
             );
         }
@@ -416,9 +427,14 @@ mod tests {
         let report = serde_json::json!({
             "documented": [
                 {"name": "network_type", "uuid": p::CHAR_NETWORK_TYPE.to_string(),
-                 "exposed": true, "value": {"hex": "00", "text": ""}},
+                 "exposed": true, "value": {"hex": "00", "text": ""},
+                 "properties": {"read": true, "write": true}},
                 {"name": "camera_power", "uuid": p::CHAR_CAMERA_POWER.to_string(),
-                 "exposed": true, "value": {"hex": "01", "text": ""}},
+                 "exposed": true, "value": {"hex": "01", "text": ""},
+                 "properties": {"read": true, "write": true}},
+                {"name": "model_number", "uuid": p::CHAR_MODEL_NUMBER.to_string(),
+                 "exposed": true, "value": {"hex": "4752", "text": "GR"},
+                 "properties": {"read": true, "write": false}},
                 {"name": "channel", "uuid": p::CHAR_CHANNEL.to_string(),
                  "exposed": false, "value": null}
             ],
@@ -431,12 +447,67 @@ mod tests {
         // Not exposed by the real camera means not present here either: a test
         // must fail the same way the hardware would.
         assert!(table.get(p::CHAR_CHANNEL).is_none());
+        // And the camera's own permissions carry across, or the captured table
+        // would accept writes the camera refuses.
+        assert!(table.get(p::CHAR_NETWORK_TYPE).unwrap().writable);
+        assert!(!table.get(p::CHAR_MODEL_NUMBER).unwrap().writable);
+    }
+
+    #[test]
+    fn a_report_without_properties_yields_a_read_only_table() {
+        // Reports captured before `doctor` recorded properties cannot say what
+        // the camera allows. Refusing every write fails a test visibly; the
+        // other default accepts writes the camera would reject, which is the
+        // bug the read-only guard exists to catch.
+        let report = serde_json::json!({
+            "documented": [
+                {"name": "network_type", "uuid": p::CHAR_NETWORK_TYPE.to_string(),
+                 "exposed": true, "value": {"hex": "00", "text": ""}}
+            ],
+            "undocumented_present": []
+        });
+        let table = GattTable::from_doctor_report(&report).unwrap();
+        assert!(!table.get(p::CHAR_NETWORK_TYPE).unwrap().writable);
     }
 
     #[test]
     fn an_empty_doctor_report_is_rejected() {
         let report = serde_json::json!({"documented": []});
         assert!(GattTable::from_doctor_report(&report).is_err());
+    }
+
+    #[test]
+    fn the_captured_table_in_the_repository_is_usable() {
+        // `emulator/gatt-captured.json` is what the e2e-ble job serves. If it
+        // stops parsing, or loses its provenance, or comes back with a camera
+        // that cannot be woken, the job would still be green while testing
+        // something else entirely.
+        let text = include_str!("../../emulator/gatt-captured.json");
+        let table: GattTable = serde_json::from_str(text).expect("captured table parses");
+
+        assert!(table.provenance.is_hardware());
+        assert_eq!(table.characteristics.len(), p::KNOWN_CHARACTERISTICS.len());
+
+        // The permissions the camera itself reported. gr3sync writes to these
+        // three and to nothing else; see `ble.rs`.
+        for uuid in [
+            p::CHAR_CAMERA_POWER,
+            p::CHAR_NETWORK_TYPE,
+            p::CHAR_OPERATION_MODE,
+        ] {
+            assert!(table.get(uuid).unwrap().writable, "{uuid} must be writable");
+        }
+        for uuid in [
+            p::CHAR_MODEL_NUMBER,
+            p::CHAR_SERIAL_NUMBER,
+            p::CHAR_BATTERY_LEVEL,
+            p::CHAR_STORAGE_INFORMATION,
+        ] {
+            assert!(
+                !table.get(uuid).unwrap().writable,
+                "{uuid} is read-only on the camera"
+            );
+        }
     }
 
     #[test]

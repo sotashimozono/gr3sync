@@ -162,7 +162,23 @@ jobs:
           python -c "import bumble; print('bumble', bumble.__version__)"
 
       - run: cargo build --release --features emulator
-      - run: ./target/release/gr3-emulator gatt > /tmp/gatt.json
+
+      # Prefer the table captured from a real GR IIIx. The specification table
+      # agrees with gr3sync's assumptions whether or not a camera does, so a
+      # green run against it says less. The fallback keeps this job working in
+      # a checkout without the capture.
+      - name: Choose a GATT table, preferring the captured one
+        id: gatt
+        run: |
+          set -euo pipefail
+          if [ -f emulator/gatt-captured.json ]; then
+            cp emulator/gatt-captured.json /tmp/gatt.json
+            echo "captured=true" >> "$GITHUB_OUTPUT"
+          else
+            ./target/release/gr3-emulator gatt > /tmp/gatt.json
+            echo "captured=false" >> "$GITHUB_OUTPUT"
+          fi
+          python3 -c "import json;print('provenance:', json.load(open('/tmp/gatt.json'))['provenance'])"
 
       # Must pass. If the peripheral cannot even start, the script is broken.
       - name: The peripheral must build its GATT table and advertise
@@ -176,15 +192,24 @@ jobs:
               exit 1
             }
           cat /tmp/local.ndjson
-          python3 - <<'PY'
-          import json
+          CAPTURED='${{ steps.gatt.outputs.captured }}' python3 - <<'PY'
+          import json, os
+          captured = os.environ['CAPTURED'] == 'true'
           events = [json.loads(line) for line in open('/tmp/local.ndjson') if line.strip()]
           ready = next(e for e in events if e.get('event') == 'ready')
           print('ready:', ready)
           assert ready['characteristics'] >= 13, ready
           assert ready['services'] >= 4, ready
-          # The specification-provenance warning must be present and loud.
-          assert any(e.get('event') == 'warning' for e in events), events
+          # The specification-provenance warning must be present and loud when
+          # the table is an assumption — and absent when it is a recording, or
+          # nobody would ever notice it going quiet. Match on the reason: the
+          # peripheral also warns about dropped characteristics, which is a
+          # different problem and must not stand in for this one.
+          warned = any(
+              e.get('event') == 'warning' and 'came from the specification' in e.get('reason', '')
+              for e in events
+          )
+          assert warned != captured, (captured, events)
           PY
 
       - name: Is a virtual Bluetooth controller available on this runner?

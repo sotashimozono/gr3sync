@@ -558,6 +558,11 @@ fn cmd_doctor(cli: &Cli, args: &BleArgs) -> Result<ExitCode> {
             rows.push(json!({
                 "name": name,
                 "uuid": uuid.to_string(),
+                // Recorded so a captured table keeps the camera's own
+                // permissions. Rebuilt without them, every characteristic
+                // becomes writable and the emulator stops catching a write the
+                // camera would refuse.
+                "properties": session.gatt().properties(*uuid),
                 // Recorded so `gr3-emulator gatt --from-doctor` can rebuild a
                 // peripheral from this report: a GATT client reaches a
                 // characteristic through its service, not by UUID alone.

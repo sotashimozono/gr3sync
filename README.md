@@ -206,14 +206,17 @@ keep_dirs   = true                  # dest/100RICOH/x.JPG vs dest/x.JPG
 Be aware of what has and has not been exercised.
 
 There is an emulated camera under `emulator/` — see
-[`emulator/README.md`](emulator/README.md). It is worth being precise about what
-that buys, because it is easy to over-read: the emulator is built from the *same
-reverse-engineered specification* as gr3sync, so it agrees with gr3sync's
-assumptions whether or not a real GR III does. It proves the transport chain
-carries the operations and guards against regressions. It cannot tell you the
-specification is right. (It stops being a shared-convention oracle once its GATT
-table is rebuilt from a real camera's `doctor --json` output, which is a
-supported path.)
+[`emulator/README.md`](emulator/README.md). Its **GATT table is a recording of a
+real camera**: `emulator/gatt-captured.json` holds the bytes and the write
+permissions a GR IIIx on firmware 1.41 actually reported, so tests against it
+check gr3sync's decoding against hardware rather than against its own
+assumptions. The Wi-Fi half is still a model of the endpoints, written from the
+same reverse-engineered specification as gr3sync, and agrees with gr3sync's
+assumptions whether or not a camera would.
+
+Even the recorded half is one body's answers, frozen. It says nothing about
+what the camera *does* in response — whether the radio comes up, how long it
+takes — and nothing about a GR III or another firmware.
 
 **Verified by `cargo test --all-features`, no hardware:**
 
@@ -254,8 +257,9 @@ Working and raw bytes are in [#9](https://github.com/sotashimozono/gr3sync/issue
   one is still open;
 - the camera answers BLE while switched off and keeps advertising, so
   `Enable Condition = On anytime` does what the specification says;
-- every one of the 15 documented characteristics is exposed, plus 48 that
-  gr3sync does not know about;
+- every one of the 14 documented characteristics is exposed, plus 48 that
+  gr3sync does not know about, and the camera's own write permissions match
+  what gr3sync assumed — `emulator/gatt-captured.json` is that recording;
 - the byte layouts of Battery Level and Storage Information — both of which the
   reverse-engineered field list had wrong, and both of which failed quietly:
   the battery read errored and took the `min_battery` floor down with it, and
