@@ -451,10 +451,15 @@ mod tests {
         // If these disagreed, a flattened destination would look empty on every
         // run and pull the whole card again.
         let photo = PhotoRef::new("100RICOH", "R0000001.JPG");
+        let dest = Path::new("/dest");
         for keep_dirs in [true, false] {
-            let path = local_path(Path::new("/dest"), &photo, keep_dirs);
+            let path = local_path(dest, &photo, keep_dirs);
             let key = ledger_key(&photo, keep_dirs);
-            assert!(path.to_string_lossy().ends_with(&key), "{path:?} vs {key}");
+            // `state::already_have` resolves a key as `dest.join(key)`, so the
+            // two must name the same file. Compare as paths, not as text: the
+            // ledger key is always `/`-joined while `local_path` is native, and
+            // on Windows those differ as strings but not as paths.
+            assert_eq!(path, dest.join(&key), "{path:?} vs {key}");
         }
     }
 

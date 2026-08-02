@@ -345,7 +345,9 @@ fn a_config_file_supplies_the_destination() {
     std::fs::create_dir_all(&config_dir).unwrap();
     std::fs::write(
         config_dir.join("config.toml"),
-        format!("dest = \"{}\"\nmin_battery = 0\n", dest.display()),
+        // A TOML literal string, because a native path is not an escape
+        // sequence: `dest = "C:\Users\..."` is a parse error, not a path.
+        format!("dest = '{}'\nmin_battery = 0\n", dest.display()),
     )
     .unwrap();
 
@@ -379,10 +381,12 @@ fn a_typo_in_the_config_stops_the_run_instead_of_syncing_somewhere_else() {
 
 #[test]
 fn bluetooth_subcommands_leave_the_user_with_something_to_act_on() {
-    // CI runners have no usable Bluetooth. The requirement is not that these
-    // work, but that the user is never left with silence.
+    // The requirement is not that these work — that needs a camera — but that
+    // the user is never left with silence.
     //
-    // The two platforms fail differently, and both are covered here:
+    // Four host shapes reach this test, and the invariant has to hold on all
+    // of them, because bring-up runs the suite on the machine that has the
+    // camera:
     //
     // * Linux without an adapter -> gr3sync catches it and prints
     //   "gr3sync: Bluetooth is unavailable: ...".
@@ -391,6 +395,13 @@ fn bluetooth_subcommands_leave_the_user_with_something_to_act_on() {
     //   kill, so the only thing that can help is the hint gr3sync prints
     //   before touching CoreBluetooth. Observed on a macos-latest runner:
     //   non-zero exit, completely empty stderr, before the hint existed.
+    // * a working adapter and no camera -> `scan` treats "found nothing" as a
+    //   normal empty result and says so on *stdout*, exiting 1; the other four
+    //   raise CameraNotFound on stderr and exit 2.
+    // * a working adapter and a reachable camera -> they succeed.
+    //
+    // Only CI is known to have no camera, so only CI can demand a failure.
+    let cameraless_host = std::env::var_os("CI").is_some();
     let (home, _) = sandbox();
     for args in [
         vec!["scan", "--timeout", "1"],
@@ -405,12 +416,18 @@ fn bluetooth_subcommands_leave_the_user_with_something_to_act_on() {
             run.status, run.stdout, run.stderr
         );
 
-        assert_ne!(run.status, 0, "unexpectedly succeeded: {context}");
         assert!(!run.stderr.contains("panicked"), "panicked: {context}");
-        assert!(
-            run.stderr.contains("gr3sync:") || run.stderr.contains("Privacy & Security"),
-            "the user was left with nothing actionable: {context}"
-        );
+        if cameraless_host {
+            assert_ne!(run.status, 0, "unexpectedly succeeded: {context}");
+        }
+        if run.status != 0 {
+            assert!(
+                run.stderr.contains("gr3sync:")
+                    || run.stderr.contains("Privacy & Security")
+                    || !run.stdout.trim().is_empty(),
+                "the user was left with nothing actionable: {context}"
+            );
+        }
     }
 }
 
