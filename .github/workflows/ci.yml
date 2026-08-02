@@ -5,44 +5,55 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   test:
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: ${{ matrix.python }}
-      - run: pip install -e '.[ble,dev]'
-      - run: ruff check .
-      - run: ruff format --check .
-      - run: pytest
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      # btleplug's Linux backend links against libdbus; macOS uses
+      # CoreBluetooth and needs nothing extra.
+      - name: Install libdbus
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
 
-  # The core must stay installable and usable with no third-party packages at
-  # all, so that it can be dropped onto whatever machine is near the camera.
-  # Without this job that property would rot silently.
-  no-dependencies:
+  # The binary has to be usable on a machine that has never seen this project,
+  # which is the entire reason for shipping one static executable. Building it
+  # for real — and checking the subcommands that need no camera actually run —
+  # is what keeps that true.
+  binary:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: pip install .
-      - name: Nothing third-party may have come along
-        run: python -c "import bleak" && { echo 'bleak was installed by a bare install'; exit 1; } || true
-      - run: gr3sync --help
-      - run: gr3sync backends
-      - run: gr3sync config show
-      - name: Bluetooth commands must fail with an actionable message, not a traceback
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - run: cargo build --release
+      - run: ./target/release/gr3sync --help
+      - run: ./target/release/gr3sync backends
+      - run: ./target/release/gr3sync config
+      - name: A host with no Bluetooth must get advice, not a panic
         run: |
           set +e
-          output=$(gr3sync scan 2>&1)
+          output=$(./target/release/gr3sync scan --timeout 1 2>&1)
           status=$?
           echo "$output"
           [ "$status" -eq 2 ] || { echo "expected exit 2, got $status"; exit 1; }
-          case "$output" in *"gr3sync[ble]"*) ;; *) echo "message did not say how to fix it"; exit 1 ;; esac
+          case "$output" in
+            *panicked*) echo "a panic reached the user"; exit 1 ;;
+          esac
+      - name: Report the binary size
+        run: ls -lh target/release/gr3sync

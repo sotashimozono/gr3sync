@@ -22,6 +22,9 @@ gr3sync -> /home/you/Pictures/GR3
 
 The camera stays in your bag for all of that.
 
+> **Unofficial.** Nothing here is documented or endorsed by RICOH. See
+> [Provenance](#provenance) and [Verification status](#verification-status).
+
 ## Why this exists
 
 The GR III has two radios and the community has reverse-engineered both, but the
@@ -35,10 +38,9 @@ existing tools each cover only one leg:
 | [tomdymond/pi-python-ricohgr](https://github.com/tomdymond/pi-python-ricohgr) | polls for the camera SSID | turn Wi-Fi on by hand |
 | [hhornbacher/gr3x-fw-hack](https://github.com/hhornbacher/gr3x-fw-hack) | firmware research | — (does not boot) |
 
-gr3sync joins the two legs: it uses BLE to **wake the camera and raise its
-access point**, reads the SSID and passphrase back over BLE, and only then does
-the HTTP download that the other tools already do well. The manual step
-disappears.
+gr3sync joins the two legs: BLE **wakes the camera and raises its access
+point**, reads the SSID and passphrase back, and only then does the HTTP
+download the other tools already do well. The manual step disappears.
 
 ## How it works
 
@@ -55,7 +57,7 @@ HTTP GET  /v1/props            model, battery
      GET  /v1/photos           {"dirs":[{"name":"100RICOH","files":[…]}]}
      GET  /v1/photos/{d}/{f}   JPEG and DNG bodies
      POST /v1/device/wlan/finish                      ← drop the AP from its side
-host restore the previous Wi-Fi association           ← in a finally block
+host restore the previous Wi-Fi association           ← always, even on failure
 BLE  write Camera Power = Off  (only if gr3sync was the one that woke it)
 ```
 
@@ -63,40 +65,54 @@ BLE is dropped before the transfer on purpose: Bluetooth and 2.4 GHz Wi-Fi share
 an antenna on most combo radios, and an idle BLE link costs throughput on both
 sides for nothing.
 
+The Bluetooth surface is deliberately the narrowest possible — connect, read,
+write **with response**, disconnect. No notifications, no subscriptions, no
+writes-without-response. Those are the operations `btleplug`'s issue tracker
+reports trouble with, and none of them are needed here.
+
 ## Install
 
 ```sh
-pip install 'gr3sync[ble]'          # full: Bluetooth + Wi-Fi
-pip install gr3sync                 # Wi-Fi only, zero dependencies
+cargo install --git https://github.com/sotashimozono/gr3sync
 ```
 
-The Wi-Fi half is standard library only, so it can be dropped onto any machine
-that happens to be near the camera. `bleak` is needed only for the Bluetooth leg.
+One static binary, no runtime to install. On Linux you need libdbus at build
+time (`libdbus-1-dev` / `dbus-devel`), which is what `btleplug` links against;
+macOS uses CoreBluetooth and needs nothing extra.
+
+Cross-compiling for a Raspberry Pi sync box:
+
+```sh
+cross build --release --target aarch64-unknown-linux-gnu
+```
 
 ## Camera setup, once
 
 1. **Pair** the host with the camera (camera menu → Bluetooth → pairing).
-   Bluetooth pairing is per-device and the GR III keeps essentially one partner,
-   so pairing a laptop will likely displace the phone running Image Sync.
-2. Set **Bluetooth → Enable Condition → "On anytime"**. Without this, BLE only
+   Pairing is per-device and the GR III keeps essentially one partner, so
+   pairing a laptop will likely displace the phone running Image Sync.
+2. Set **Bluetooth → Enable Condition → "On anytime"**. Without it, BLE only
    answers while the camera is already switched on, and waking a camera that is
    off — the whole point — will not work.
+
+`gr3sync info` prints the Enable Condition the camera currently reports.
 
 ## Usage
 
 ```sh
-gr3sync pull                        # everything new, into the configured folder
+gr3sync pull                          # everything new, into the configured folder
 gr3sync pull ~/Pictures/GR3 -j -l 20  # last 20 JPEGs only
-gr3sync pull --dry-run              # say what it would do, touch nothing
-gr3sync pull --no-ble               # camera Wi-Fi already on, skip Bluetooth
+gr3sync pull --dry-run                # say what it would do, touch nothing
+gr3sync pull --no-ble                 # camera Wi-Fi already on, skip Bluetooth
 
-gr3sync scan                        # which cameras are reachable over BLE
-gr3sync info                        # model, battery, storage, power state
-gr3sync wlan on                     # just raise the AP and print the credentials
+gr3sync scan                          # which cameras are reachable over BLE
+gr3sync info                          # model, battery, storage, power state
+gr3sync doctor                        # which documented characteristics exist
+gr3sync wlan on                       # raise the AP and print the credentials
 gr3sync wlan off
-gr3sync list                        # what is on the card (needs to be on the AP)
+gr3sync list                          # what is on the card (needs to be on the AP)
 gr3sync get 100RICOH/R0001234.DNG
-gr3sync backends                    # which Wi-Fi control backends work here
+gr3sync backends                      # which Wi-Fi backends work on this host
 ```
 
 Every subcommand takes `--json`. For `pull` that is a newline-delimited event
@@ -104,17 +120,29 @@ stream; for the rest it is a single JSON document. **That is the wrapper
 interface** — a photo-manager plugin, a Claude Code skill or a systemd unit
 should read those events rather than scrape the progress text.
 
-```python
-from gr3sync import SyncOptions, run_sync
-
-result = run_sync(SyncOptions(dest=Path("~/Pictures/GR3").expanduser()), print)
-print(result.downloaded, result.failed)
+```sh
+gr3sync --json pull | jq -r 'select(.event=="download.done") | .photo'
 ```
+
+### Diagnosis
+
+`doctor` reads every characteristic gr3sync knows about and reports which ones
+the camera actually exposes, plus any it exposes that gr3sync does not know
+about. When something does not line up, `raw` pokes a single characteristic:
+
+```sh
+gr3sync raw read network_type
+gr3sync raw read 9111cdd0-9f01-45c4-a2d4-e09e8fb0424d
+gr3sync raw write network_type 01     # this is what 'wlan on' does
+```
+
+`raw write` pokes an undocumented device. Know what a value means first.
 
 ## Config
 
 `~/.config/gr3sync/config.toml` — every key optional, every key has a flag that
-overrides it.
+overrides it. An unknown key is an error rather than a silent default, so a typo
+cannot quietly send a sync to the wrong directory.
 
 ```toml
 dest        = "~/Pictures/GR3"
@@ -128,24 +156,24 @@ keep_dirs   = true                  # dest/100RICOH/x.JPG vs dest/x.JPG
 
 - **Delete anything from the card.** The only writes are to the camera's power
   and WLAN characteristics; the SD card is read-only as far as gr3sync is
-  concerned.
+  concerned. A test pins the set of characteristics it is ever allowed to write.
 - **Turn off a camera you switched on yourself.** `power_off` applies only when
   gr3sync did the waking.
-- **Change camera state it did not create.** With `--no-ble`, the camera's AP is
+- **Change camera state it did not create.** With `--no-ble` the access point is
   left up, because you were the one who raised it.
 
 ## Known constraints
 
 - **The camera's Wi-Fi is AP mode only.** There is no station mode in which the
   camera joins your network. The sync host therefore loses its normal network
-  for the duration of the transfer unless it has a second adapter. This is a
+  for the duration of the transfer unless it has a second adapter. That is a
   camera limitation, not something gr3sync can route around.
-- **Bluetooth pairing is effectively one partner.** See "Camera setup" above.
+- **Bluetooth pairing is effectively one partner.** See "Camera setup".
 - **`--last N` on a large card still lists the whole card first.** `/v1/photos`
   has no pagination.
 - **The `File Transfer List` characteristic is not used as a "has new photos"
-  check.** It reflects the camera's *transfer queue* (images explicitly marked
-  in Image Sync), not "photos you have not downloaded", so gating on it would
+  check.** It reflects the camera's *transfer queue* — images explicitly marked
+  in Image Sync — not "photos you have not downloaded", so gating on it would
   silently skip everything. New files are found by diffing `/v1/photos` against
   the destination.
 
@@ -153,41 +181,43 @@ keep_dirs   = true                  # dest/100RICOH/x.JPG vs dest/x.JPG
 
 Be aware of what has and has not been exercised.
 
-**Verified by the test suite** (`pytest`, no hardware):
+**Verified by `cargo test`, no hardware:**
 
-- the HTTP client and the whole download path, against a real socket server that
-  reproduces the camera's endpoints and JSON envelope — including a transfer cut
-  short mid-body, which must leave no `.part` file and no truncated JPEG;
+- the HTTP client and the whole download path, against a real socket server
+  reproducing the camera's endpoints — including a transfer cut short mid-body
+  (which must leave no `.part` file and no truncated JPEG) and a body larger
+  than 10 MB (the default cap in `ureq`'s buffered read, which would otherwise
+  refuse every DNG this camera produces);
 - incremental sync, the ledger, and the disk/ledger agreement that stops a
   reorganised photo library from triggering a full re-download;
 - Wi-Fi backend command construction and output parsing for `nmcli` and
   `networksetup`, with the subprocess boundary stubbed;
-- teardown ordering: the host's network is restored and the camera's AP is
-  dropped even when the pull raises;
+- teardown ordering: the host's association is restored and the camera's AP is
+  dropped even when the pull fails;
 - the BLE **protocol** — UUIDs, value encodings, and which GATT operations are
-  issued in which order — against a stand-in for `bleak`.
+  issued in which order — against an in-memory stand-in for the transport.
 
 **Not verified — needs a GR III in the room:**
 
 - that a real camera accepts `Network Type = 1` from a non-Image-Sync client and
-  actually raises its AP;
+  actually raises its access point;
 - how long the camera takes to bring the AP up (the 3 s settle and 45 s join
-  timeout are estimates);
+  timeout are estimates, not measurements);
 - whether waking a fully powered-off camera over BLE works with
   `Enable Condition = On anytime`, as the specification implies;
-- the real characteristic layouts for Storage Information and Battery Level,
-  which are decoded from a reverse-engineered field list rather than observed
-  bytes;
-- everything about `networksetup` on current macOS.
+- the real byte layouts of Storage Information and Battery Level, decoded from a
+  reverse-engineered field list rather than from observed bytes;
+- everything about `networksetup` on current macOS;
+- `btleplug`'s CoreBluetooth backend against this particular device.
 
-`gr3sync scan`, `gr3sync info` and `gr3sync wlan on` exist so those can be
-checked one at a time.
+`gr3sync scan`, `info`, `doctor`, `wlan on` and `raw` exist so those can be
+checked one at a time. No release is tagged until they have been.
 
 ## Provenance
 
-Nothing here is officially documented by RICOH. The BLE UUIDs come from
+The BLE UUIDs come from
 [dm-zharov/ricoh-gr-bluetooth-api](https://github.com/dm-zharov/ricoh-gr-bluetooth-api)
-(Unlicense); the HTTP endpoint list comes from Dima Kogan's
+(Unlicense); the HTTP endpoint list from Dima Kogan's
 [firmware strings dump](https://notes.secretsauce.net/notes/2022/06/16_ricoh-gr-iiix-80211-reverse-engineering.html);
 the JSON envelope shapes match what [clyang/GRsync](https://github.com/clyang/GRsync)
 consumes in practice. Use at your own risk.

@@ -1,0 +1,33 @@
+[package]
+name = "gr3sync"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Pull photos off a RICOH GR III over Bluetooth + Wi-Fi, without touching the camera"
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/sotashimozono/gr3sync"
+keywords = ["ricoh", "camera", "bluetooth", "ble", "photo"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+btleplug = "0.12"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+toml = "0.8"
+# Plain HTTP on a private link: no TLS, no proxy, no cookies. Every one of those
+# features would only add attack surface and binary size for a camera that
+# serves unauthenticated http:// on 192.168.0.1.
+ureq = { version = "3", default-features = false }
+uuid = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

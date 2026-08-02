@@ -1,0 +1,656 @@
+//! Bluetooth Low Energy control of the camera.
+//!
+//! This is the layer that removes the manual step every other GR III sync tool
+//! still requires: instead of picking up the camera and turning its wireless
+//! LAN on by hand, gr3sync wakes the camera and raises its access point over
+//! BLE, then reads back the SSID and passphrase to connect to.
+//!
+//! The `btleplug` surface used here is deliberately the narrowest possible —
+//! connect, read a characteristic, write one **with response**, disconnect. No
+//! notifications, no subscriptions, no writes-without-response. That is not an
+//! accident: those are the operations btleplug's own issue tracker reports
+//! trouble with, and none of them are needed.
+//!
+//! Everything above the transport goes through the [`Gatt`] trait, so the
+//! session logic is testable without a camera in the room.
+//!
+//! Prerequisites on the camera, both set from its own menus:
+//!
+//! * the host must be **paired** with the camera (pairing is per-device and the
+//!   GR III keeps essentially one partner, so pairing a laptop is likely to
+//!   displace the phone running Image Sync);
+//! * `BLE Enable Condition` must be `On anytime` for a powered-off camera to be
+//!   reachable at all.
+
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::time::Duration;
+
+use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter, WriteType};
+use btleplug::platform::{Manager, Peripheral};
+use serde::Serialize;
+use uuid::Uuid;
+
+use crate::error::{Error, Result};
+use crate::protocol as p;
+
+/// Prefixes that identify a GR camera advertising over BLE. The camera
+/// advertises as e.g. "GR_4CF5C6".
+pub const DEFAULT_NAME_PREFIXES: &[&str] = &["GR_", "RICOH GR", "GR III", "GRIII"];
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DiscoveredCamera {
+    pub address: String,
+    pub name: Option<String>,
+    pub rssi: Option<i16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WlanCredentials {
+    pub ssid: String,
+    pub passphrase: String,
+}
+
+/// The whole Bluetooth surface gr3sync needs.
+///
+/// Four operations. Implemented once against `btleplug` and once against an
+/// in-memory table in the tests.
+pub trait Gatt {
+    fn read(&self, uuid: Uuid) -> impl Future<Output = Result<Vec<u8>>> + Send;
+    fn write(&self, uuid: Uuid, data: &[u8]) -> impl Future<Output = Result<()>> + Send;
+    /// Which characteristics the peer actually exposes. Used by `doctor` to
+    /// report a camera whose GATT table does not match the documented profile.
+    fn available(&self) -> Vec<Uuid>;
+}
+
+// ---------------------------------------------------------------------------
+// Discovery
+// ---------------------------------------------------------------------------
+
+async fn adapter() -> Result<btleplug::platform::Adapter> {
+    let manager = Manager::new()
+        .await
+        .map_err(|e| Error::BluetoothUnavailable(e.to_string()))?;
+    let adapters = manager
+        .adapters()
+        .await
+        .map_err(|e| Error::BluetoothUnavailable(e.to_string()))?;
+    adapters
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::BluetoothUnavailable("no Bluetooth adapter on this host".into()))
+}
+
+/// Discover nearby cameras.
+///
+/// With `all_devices` the name filter is dropped, which is the escape hatch for
+/// a camera renamed away from the factory `GR_XXXXXX`.
+pub async fn scan(timeout: Duration, all_devices: bool) -> Result<Vec<DiscoveredCamera>> {
+    let adapter = adapter().await?;
+    adapter
+        .start_scan(ScanFilter::default())
+        .await
+        .map_err(|e| Error::BluetoothUnavailable(format!("starting a scan: {e}")))?;
+    tokio::time::sleep(timeout).await;
+    let peripherals = adapter
+        .peripherals()
+        .await
+        .map_err(|e| Error::Ble(format!("listing peripherals: {e}")))?;
+    let _ = adapter.stop_scan().await;
+
+    let mut found = Vec::new();
+    for peripheral in peripherals {
+        let Ok(Some(properties)) = peripheral.properties().await else {
+            continue;
+        };
+        let name = properties
+            .local_name
+            .clone()
+            .or_else(|| properties.advertisement_name.clone());
+        if !all_devices && !is_camera_name(name.as_deref()) {
+            continue;
+        }
+        found.push(DiscoveredCamera {
+            address: properties.address.to_string(),
+            name,
+            rssi: properties.rssi,
+        });
+    }
+    Ok(found)
+}
+
+pub fn is_camera_name(name: Option<&str>) -> bool {
+    name.is_some_and(|n| {
+        DEFAULT_NAME_PREFIXES
+            .iter()
+            .any(|prefix| n.starts_with(prefix))
+    })
+}
+
+/// Resolve which camera to talk to, failing loudly when it is ambiguous.
+///
+/// An explicit address still goes through a scan, because btleplug can only
+/// hand back a `Peripheral` the adapter has actually seen.
+pub async fn find_one(address: Option<&str>, timeout: Duration) -> Result<DiscoveredCamera> {
+    let candidates = scan(timeout, address.is_some()).await?;
+    if let Some(wanted) = address {
+        return candidates
+            .into_iter()
+            .find(|c| c.address.eq_ignore_ascii_case(wanted))
+            .ok_or(Error::CameraNotFound);
+    }
+    pick_one(candidates)
+}
+
+/// Split out from [`find_one`] so the ambiguity rule is testable without a radio.
+pub fn pick_one(mut candidates: Vec<DiscoveredCamera>) -> Result<DiscoveredCamera> {
+    match candidates.len() {
+        0 => Err(Error::CameraNotFound),
+        1 => Ok(candidates.remove(0)),
+        _ => Err(Error::AmbiguousCamera(
+            candidates
+                .iter()
+                .map(|c| format!("{} ({})", c.name.as_deref().unwrap_or("?"), c.address))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// btleplug transport
+// ---------------------------------------------------------------------------
+
+pub struct BtleplugGatt {
+    peripheral: Peripheral,
+    characteristics: BTreeMap<Uuid, btleplug::api::Characteristic>,
+}
+
+impl BtleplugGatt {
+    /// Connect and discover services. The returned value owns the connection
+    /// until [`BtleplugGatt::disconnect`] is called.
+    pub async fn connect(address: &str, timeout: Duration) -> Result<Self> {
+        let adapter = adapter().await?;
+        adapter
+            .start_scan(ScanFilter::default())
+            .await
+            .map_err(|e| Error::BluetoothUnavailable(format!("starting a scan: {e}")))?;
+        tokio::time::sleep(timeout.min(Duration::from_secs(10))).await;
+        let peripherals = adapter
+            .peripherals()
+            .await
+            .map_err(|e| Error::Ble(format!("listing peripherals: {e}")))?;
+        let _ = adapter.stop_scan().await;
+
+        let mut target = None;
+        for peripheral in peripherals {
+            if let Ok(Some(properties)) = peripheral.properties().await {
+                if properties.address.to_string().eq_ignore_ascii_case(address) {
+                    target = Some(peripheral);
+                    break;
+                }
+            }
+        }
+        let peripheral = target.ok_or(Error::CameraNotFound)?;
+
+        peripheral
+            .connect()
+            .await
+            .map_err(|e| Error::Ble(format!("could not connect to {address}: {e}")))?;
+        peripheral
+            .discover_services()
+            .await
+            .map_err(|e| Error::Ble(format!("discovering services on {address}: {e}")))?;
+
+        let characteristics = peripheral
+            .characteristics()
+            .into_iter()
+            .map(|c| (c.uuid, c))
+            .collect();
+        Ok(Self {
+            peripheral,
+            characteristics,
+        })
+    }
+
+    pub async fn disconnect(&self) {
+        // Disconnect failures are not actionable and must not mask whatever
+        // error is already on its way out.
+        let _ = self.peripheral.disconnect().await;
+    }
+
+    fn characteristic(&self, uuid: Uuid) -> Result<&btleplug::api::Characteristic> {
+        self.characteristics
+            .get(&uuid)
+            .ok_or(Error::MissingCharacteristic(uuid))
+    }
+}
+
+impl Gatt for BtleplugGatt {
+    async fn read(&self, uuid: Uuid) -> Result<Vec<u8>> {
+        let characteristic = self.characteristic(uuid)?;
+        self.peripheral
+            .read(characteristic)
+            .await
+            .map_err(|e| Error::Ble(format!("read {uuid} failed: {e}")))
+    }
+
+    async fn write(&self, uuid: Uuid, data: &[u8]) -> Result<()> {
+        let characteristic = self.characteristic(uuid)?;
+        // WithResponse throughout: gr3sync needs to know the camera accepted
+        // the write, and write-without-response is btleplug's rough edge.
+        self.peripheral
+            .write(characteristic, data, WriteType::WithResponse)
+            .await
+            .map_err(|e| Error::Ble(format!("write {uuid} failed: {e}")))
+    }
+
+    fn available(&self) -> Vec<Uuid> {
+        self.characteristics.keys().copied().collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session
+// ---------------------------------------------------------------------------
+
+/// Camera operations, expressed over any [`Gatt`] transport.
+pub struct Session<G: Gatt> {
+    gatt: G,
+}
+
+impl<G: Gatt> Session<G> {
+    pub fn new(gatt: G) -> Self {
+        Self { gatt }
+    }
+
+    pub fn gatt(&self) -> &G {
+        &self.gatt
+    }
+
+    // -- identity ---------------------------------------------------------
+
+    pub async fn model(&self) -> Result<String> {
+        Ok(p::decode_utf8(&self.gatt.read(p::CHAR_MODEL_NUMBER).await?))
+    }
+
+    pub async fn firmware(&self) -> Result<String> {
+        Ok(p::decode_utf8(
+            &self.gatt.read(p::CHAR_FIRMWARE_REVISION).await?,
+        ))
+    }
+
+    pub async fn serial(&self) -> Result<String> {
+        Ok(p::decode_utf8(
+            &self.gatt.read(p::CHAR_SERIAL_NUMBER).await?,
+        ))
+    }
+
+    // -- camera state -----------------------------------------------------
+
+    pub async fn power(&self) -> Result<p::CameraPower> {
+        let raw = self.gatt.read(p::CHAR_CAMERA_POWER).await?;
+        p::CameraPower::from_i8(p::decode_sint8(p::CHAR_CAMERA_POWER, &raw)?)
+    }
+
+    pub async fn set_power(&self, value: p::CameraPower) -> Result<()> {
+        self.gatt
+            .write(p::CHAR_CAMERA_POWER, &p::encode_sint8(value.as_i8()))
+            .await
+    }
+
+    pub async fn battery(&self) -> Result<p::BatteryLevel> {
+        p::decode_battery_level(&self.gatt.read(p::CHAR_BATTERY_LEVEL).await?)
+    }
+
+    pub async fn storage(&self) -> Result<Vec<p::StorageSlot>> {
+        Ok(p::decode_storage_information(
+            &self.gatt.read(p::CHAR_STORAGE_INFORMATION).await?,
+        ))
+    }
+
+    pub async fn transfer_queue(&self) -> Result<p::FileTransferList> {
+        p::decode_file_transfer_list(&self.gatt.read(p::CHAR_FILE_TRANSFER_LIST).await?)
+    }
+
+    pub async fn ble_enable_condition(&self) -> Result<p::BleEnableCondition> {
+        let raw = self.gatt.read(p::CHAR_BLE_ENABLE_CONDITION).await?;
+        p::BleEnableCondition::from_i8(p::decode_sint8(p::CHAR_BLE_ENABLE_CONDITION, &raw)?)
+    }
+
+    // -- wireless LAN -----------------------------------------------------
+
+    pub async fn network_type(&self) -> Result<p::NetworkType> {
+        let raw = self.gatt.read(p::CHAR_NETWORK_TYPE).await?;
+        p::NetworkType::from_i8(p::decode_sint8(p::CHAR_NETWORK_TYPE, &raw)?)
+    }
+
+    pub async fn set_network_type(&self, value: p::NetworkType) -> Result<()> {
+        self.gatt
+            .write(p::CHAR_NETWORK_TYPE, &p::encode_sint8(value.as_i8()))
+            .await
+    }
+
+    pub async fn credentials(&self) -> Result<WlanCredentials> {
+        Ok(WlanCredentials {
+            ssid: p::decode_utf8(&self.gatt.read(p::CHAR_SSID).await?),
+            passphrase: p::decode_utf8(&self.gatt.read(p::CHAR_PASSPHRASE).await?),
+        })
+    }
+
+    // -- composite operations ---------------------------------------------
+
+    /// Bring the camera out of Off/Sleep, returning the power state it was in.
+    ///
+    /// The caller needs the previous state to decide whether to power the
+    /// camera down afterwards: a camera the user switched on by hand must not
+    /// be turned off by a background sync.
+    pub async fn wake(&self, settle: Duration) -> Result<p::CameraPower> {
+        let previous = self.power().await?;
+        if previous != p::CameraPower::On {
+            self.set_power(p::CameraPower::On).await?;
+            tokio::time::sleep(settle).await;
+        }
+        Ok(previous)
+    }
+
+    /// Raise the camera's access point and read back how to join it.
+    ///
+    /// Credentials are read *after* the AP is up: on a camera whose wireless
+    /// LAN has never been enabled, reading them first can return stale or
+    /// empty strings.
+    pub async fn start_ap(&self, settle: Duration) -> Result<WlanCredentials> {
+        if self.network_type().await? != p::NetworkType::ApMode {
+            self.set_network_type(p::NetworkType::ApMode).await?;
+            tokio::time::sleep(settle).await;
+        }
+        let credentials = self.credentials().await?;
+        if credentials.ssid.is_empty() {
+            return Err(Error::Ble(
+                "camera reported an empty SSID after enabling AP mode".into(),
+            ));
+        }
+        Ok(credentials)
+    }
+
+    pub async fn stop_ap(&self) -> Result<()> {
+        self.set_network_type(p::NetworkType::Off).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
+
+    /// An in-memory GATT table standing in for the camera.
+    #[derive(Default)]
+    struct FakeGatt {
+        values: Mutex<BTreeMap<Uuid, Vec<u8>>>,
+        reads: Mutex<Vec<Uuid>>,
+        writes: Mutex<Vec<(Uuid, Vec<u8>)>>,
+    }
+
+    impl FakeGatt {
+        fn camera() -> Self {
+            let fake = Self::default();
+            {
+                let mut values = fake.values.lock().unwrap();
+                values.insert(p::CHAR_MODEL_NUMBER, b"RICOH GR III\0".to_vec());
+                values.insert(p::CHAR_FIRMWARE_REVISION, b"1.90".to_vec());
+                values.insert(p::CHAR_SERIAL_NUMBER, b"01234567".to_vec());
+                values.insert(p::CHAR_CAMERA_POWER, vec![0]);
+                values.insert(p::CHAR_BATTERY_LEVEL, vec![0x58, 0x00]);
+                values.insert(p::CHAR_NETWORK_TYPE, vec![0]);
+                values.insert(p::CHAR_SSID, b"GR_4CF5C6".to_vec());
+                values.insert(p::CHAR_PASSPHRASE, b"01234567".to_vec());
+                values.insert(p::CHAR_FILE_TRANSFER_LIST, vec![1, 1]);
+            }
+            fake
+        }
+
+        fn set(&self, uuid: Uuid, value: Vec<u8>) {
+            self.values.lock().unwrap().insert(uuid, value);
+        }
+
+        fn forget(&self, uuid: Uuid) {
+            self.values.lock().unwrap().remove(&uuid);
+        }
+
+        fn writes(&self) -> Vec<(Uuid, Vec<u8>)> {
+            self.writes.lock().unwrap().clone()
+        }
+
+        fn reads(&self) -> Vec<Uuid> {
+            self.reads.lock().unwrap().clone()
+        }
+    }
+
+    impl Gatt for FakeGatt {
+        async fn read(&self, uuid: Uuid) -> Result<Vec<u8>> {
+            self.reads.lock().unwrap().push(uuid);
+            self.values
+                .lock()
+                .unwrap()
+                .get(&uuid)
+                .cloned()
+                .ok_or(Error::MissingCharacteristic(uuid))
+        }
+
+        async fn write(&self, uuid: Uuid, data: &[u8]) -> Result<()> {
+            self.writes.lock().unwrap().push((uuid, data.to_vec()));
+            self.values.lock().unwrap().insert(uuid, data.to_vec());
+            Ok(())
+        }
+
+        fn available(&self) -> Vec<Uuid> {
+            self.values.lock().unwrap().keys().copied().collect()
+        }
+    }
+
+    fn session() -> Session<FakeGatt> {
+        Session::new(FakeGatt::camera())
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    // -- discovery --------------------------------------------------------
+
+    #[test]
+    fn only_gr_names_are_treated_as_cameras() {
+        assert!(is_camera_name(Some("GR_4CF5C6")));
+        assert!(is_camera_name(Some("RICOH GR III")));
+        assert!(!is_camera_name(Some("Someone's Earbuds")));
+        assert!(!is_camera_name(None));
+    }
+
+    #[test]
+    fn two_cameras_is_an_error_not_a_coin_flip() {
+        let candidates = vec![
+            DiscoveredCamera {
+                address: "AA".into(),
+                name: Some("GR_1".into()),
+                rssi: None,
+            },
+            DiscoveredCamera {
+                address: "BB".into(),
+                name: Some("GR_2".into()),
+                rssi: None,
+            },
+        ];
+        let err = pick_one(candidates).unwrap_err();
+        assert!(err.to_string().contains("--address"), "{err}");
+    }
+
+    #[test]
+    fn no_camera_says_what_to_check() {
+        let err = pick_one(Vec::new()).unwrap_err();
+        assert!(err.to_string().contains("On anytime"), "{err}");
+    }
+
+    // -- identity ---------------------------------------------------------
+
+    #[test]
+    fn reads_identity() {
+        let session = session();
+        assert_eq!(block_on(session.model()).unwrap(), "RICOH GR III");
+        assert_eq!(block_on(session.firmware()).unwrap(), "1.90");
+        assert_eq!(block_on(session.serial()).unwrap(), "01234567");
+    }
+
+    #[test]
+    fn a_missing_characteristic_names_itself() {
+        let session = session();
+        session.gatt().forget(p::CHAR_MODEL_NUMBER);
+        let err = block_on(session.model()).unwrap_err();
+        assert!(
+            err.to_string().contains(&p::CHAR_MODEL_NUMBER.to_string()),
+            "{err}"
+        );
+    }
+
+    // -- wake -------------------------------------------------------------
+
+    #[test]
+    fn wake_powers_on_a_camera_that_was_off() {
+        let session = session();
+        let previous = block_on(session.wake(Duration::ZERO)).unwrap();
+        assert_eq!(previous, p::CameraPower::Off);
+        assert!(session
+            .gatt()
+            .writes()
+            .contains(&(p::CHAR_CAMERA_POWER, vec![1])));
+    }
+
+    #[test]
+    fn wake_does_not_write_to_a_camera_that_is_already_on() {
+        let session = session();
+        session.gatt().set(p::CHAR_CAMERA_POWER, vec![1]);
+        assert_eq!(
+            block_on(session.wake(Duration::ZERO)).unwrap(),
+            p::CameraPower::On
+        );
+        assert!(session.gatt().writes().is_empty());
+    }
+
+    #[test]
+    fn wake_reports_sleep_as_a_state_we_woke_from() {
+        let session = session();
+        session.gatt().set(p::CHAR_CAMERA_POWER, vec![2]);
+        assert_eq!(
+            block_on(session.wake(Duration::ZERO)).unwrap(),
+            p::CameraPower::Sleep
+        );
+        assert!(session
+            .gatt()
+            .writes()
+            .contains(&(p::CHAR_CAMERA_POWER, vec![1])));
+    }
+
+    // -- access point -----------------------------------------------------
+
+    #[test]
+    fn start_ap_writes_ap_mode_and_reads_the_credentials() {
+        let session = session();
+        let credentials = block_on(session.start_ap(Duration::ZERO)).unwrap();
+        assert_eq!(credentials.ssid, "GR_4CF5C6");
+        assert_eq!(credentials.passphrase, "01234567");
+        assert!(session
+            .gatt()
+            .writes()
+            .contains(&(p::CHAR_NETWORK_TYPE, vec![1])));
+    }
+
+    #[test]
+    fn credentials_are_read_after_the_ap_is_raised() {
+        // Reading SSID before AP mode is up can return a stale or empty string.
+        let session = session();
+        block_on(session.start_ap(Duration::ZERO)).unwrap();
+        let reads = session.gatt().reads();
+        let network = reads
+            .iter()
+            .position(|u| *u == p::CHAR_NETWORK_TYPE)
+            .unwrap();
+        let ssid = reads.iter().position(|u| *u == p::CHAR_SSID).unwrap();
+        assert!(network < ssid);
+    }
+
+    #[test]
+    fn start_ap_is_idempotent_when_the_ap_is_already_up() {
+        let session = session();
+        session.gatt().set(p::CHAR_NETWORK_TYPE, vec![1]);
+        assert_eq!(
+            block_on(session.start_ap(Duration::ZERO)).unwrap().ssid,
+            "GR_4CF5C6"
+        );
+        assert!(session.gatt().writes().is_empty());
+    }
+
+    #[test]
+    fn an_empty_ssid_is_refused_rather_than_handed_to_the_wifi_layer() {
+        let session = session();
+        session.gatt().set(p::CHAR_SSID, Vec::new());
+        let err = block_on(session.start_ap(Duration::ZERO)).unwrap_err();
+        assert!(err.to_string().contains("empty SSID"), "{err}");
+    }
+
+    #[test]
+    fn stop_ap_writes_off() {
+        let session = session();
+        block_on(session.stop_ap()).unwrap();
+        assert_eq!(
+            session.gatt().writes(),
+            vec![(p::CHAR_NETWORK_TYPE, vec![0])]
+        );
+    }
+
+    #[test]
+    fn every_write_targets_a_characteristic_documented_as_writable() {
+        // Writing to a read-only characteristic on a real camera is at best
+        // rejected and at worst undefined, so the set of things gr3sync ever
+        // writes is pinned here.
+        let writable: BTreeSet<Uuid> = [
+            p::CHAR_CAMERA_POWER,
+            p::CHAR_NETWORK_TYPE,
+            p::CHAR_OPERATION_MODE,
+        ]
+        .into_iter()
+        .collect();
+        let session = session();
+        block_on(async {
+            session.wake(Duration::ZERO).await.unwrap();
+            session.start_ap(Duration::ZERO).await.unwrap();
+            session.stop_ap().await.unwrap();
+            session.set_power(p::CameraPower::Off).await.unwrap();
+        });
+        for (uuid, _) in session.gatt().writes() {
+            assert!(writable.contains(&uuid), "wrote to non-writable {uuid}");
+        }
+    }
+
+    // -- telemetry --------------------------------------------------------
+
+    #[test]
+    fn battery_and_transfer_queue_decode_through_the_session() {
+        let session = session();
+        let battery = block_on(session.battery()).unwrap();
+        assert_eq!(battery.level, 88);
+        assert!(!battery.on_ac());
+        let queue = block_on(session.transfer_queue()).unwrap();
+        assert!(queue.not_empty && queue.changed);
+    }
+
+    #[test]
+    fn a_malformed_battery_value_is_an_error_not_a_zero() {
+        let session = session();
+        session.gatt().set(p::CHAR_BATTERY_LEVEL, vec![0x58]);
+        assert!(block_on(session.battery()).is_err());
+    }
+}
