@@ -171,10 +171,9 @@ pub struct BleHandoff {
 
 async fn ble_bring_up(options: &Options, sink: EventSink<'_>) -> Result<BleHandoff> {
     emit!(sink, {"event": "ble.scan", "address": options.address});
-    let target = ble::find_one(options.address.as_deref(), options.scan_timeout).await?;
+    let (target, gatt) =
+        ble::find_and_connect(options.address.as_deref(), options.scan_timeout).await?;
     emit!(sink, {"event": "ble.found", "address": target.address, "name": target.name});
-
-    let gatt = ble::BtleplugGatt::connect(&target.address, options.scan_timeout).await?;
     let session = ble::Session::new(gatt);
 
     let result = ble_bring_up_inner(&session, options, sink).await;
@@ -226,8 +225,8 @@ async fn ble_bring_up_inner<G: ble::Gatt>(
 /// Best-effort: put the camera back to sleep once the AP is gone.
 async fn ble_power_off(options: &Options, sink: EventSink<'_>) {
     let attempt = async {
-        let target = ble::find_one(options.address.as_deref(), options.scan_timeout).await?;
-        let gatt = ble::BtleplugGatt::connect(&target.address, options.scan_timeout).await?;
+        let (_target, gatt) =
+            ble::find_and_connect(options.address.as_deref(), options.scan_timeout).await?;
         let session = ble::Session::new(gatt);
         let result = session.set_power(p::CameraPower::Off).await;
         session.gatt().disconnect().await;
