@@ -163,10 +163,18 @@ impl GattTable {
             false,
         );
 
-        let mut slots = vec![1u8, p::StorageType::SdSlot1.as_i8() as u8, 1, 0, 1, 1];
-        slots.extend_from_slice(&1234i32.to_le_bytes());
-        slots.extend_from_slice(&600i32.to_le_bytes());
-        slots.extend_from_slice(&[0, 1]);
+        // Two slots, the way a real body reports: internal memory, present but
+        // not the one in use, and then the card. A single-slot table lets a
+        // decoder that loses everything past the first slot look correct.
+        let mut slots = vec![2u8];
+        let mut slot = |kind: p::StorageType, available: u8, pictures: i32, video: i32| {
+            slots.extend_from_slice(&[kind.as_i8() as u8, 1, 0, available, 1]);
+            slots.extend_from_slice(&pictures.to_le_bytes());
+            slots.extend_from_slice(&video.to_le_bytes());
+            slots.push(0);
+        };
+        slot(p::StorageType::Internal, 0, 0, 0);
+        slot(p::StorageType::SdSlot1, 1, 1234, 600);
         put(
             p::CHAR_STORAGE_INFORMATION,
             "storage_information",
