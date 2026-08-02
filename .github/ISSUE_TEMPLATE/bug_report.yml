@@ -1,0 +1,102 @@
+name: "Bug report"
+description: "Report a defect in gr3sync."
+title: "[Bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a security issue, use
+        [private vulnerability reporting](https://github.com/sotashimozono/gr3sync/security/advisories/new)
+        instead — not this form.
+
+  - type: dropdown
+    id: leg
+    attributes:
+      label: "Which leg?"
+      description: "gr3sync has two radios and a host-side network step; they fail very differently."
+      options:
+        - "Bluetooth (scan / info / doctor / wlan / raw)"
+        - "Host Wi-Fi (joining or restoring the network)"
+        - "HTTP (list / get / the download itself)"
+        - "CLI, config or output format"
+        - "build / CI"
+        - "not sure"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: "Version or commit"
+      description: "Output of `gr3sync --version`, or the commit you built."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: host
+    attributes:
+      label: "Host OS"
+      options:
+        - "Linux (NetworkManager / nmcli)"
+        - "Linux (other)"
+        - "macOS"
+        - "Windows"
+        - "other"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: camera
+    attributes:
+      label: "Camera"
+      description: >-
+        The BLE profile is shared with several bodies, but only the GR III and
+        GR IIIx are in scope today.
+      options:
+        - "RICOH GR III"
+        - "RICOH GR IIIx"
+        - "RICOH GR II"
+        - "a PENTAX body sharing the profile"
+        - "none — the emulator"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: "What you ran"
+      description: "The exact command line."
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: "What happened"
+      description: >-
+        Paste the output. `--json` output is the most useful form. If a
+        Bluetooth subcommand exited with no message at all on macOS, say so —
+        that is the OS terminating the process over the Bluetooth permission,
+        and it is a known shape of failure.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "What you expected instead"
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "gr3sync doctor --json"
+      description: >-
+        Optional but extremely useful for anything Bluetooth-related: it shows
+        which characteristics your camera actually exposes. Contains no
+        credentials.
+      render: json

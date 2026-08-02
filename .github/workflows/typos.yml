@@ -1,0 +1,24 @@
+name: typos
+
+# Cheap guard on a repository whose value is largely in its prose: the
+# README's verification status, the emulator's "what this does not prove"
+# caveats, and the error messages users are supposed to act on.
+#
+# To allow a flagged word, add it under [default.extend-words] in .typos.toml.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  typos:
+    name: typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+      - uses: crate-ci/typos@37bb98842b0d8c4ffebdb75301a13db0267cef89     # v1.47.2

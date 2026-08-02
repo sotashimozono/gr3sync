@@ -76,9 +76,11 @@ reports trouble with, and none of them are needed here.
 cargo install --git https://github.com/sotashimozono/gr3sync
 ```
 
-One static binary, no runtime to install. On Linux you need libdbus at build
-time (`libdbus-1-dev` / `dbus-devel`), which is what `btleplug` links against;
-macOS uses CoreBluetooth and needs nothing extra.
+One static binary, no runtime to install. Rust 1.85 or newer — that floor is
+verified in CI at every dependency change, not just asserted in the manifest.
+On Linux you need libdbus at build time (`libdbus-1-dev` / `dbus-devel`), which
+is what `btleplug` links against; macOS uses CoreBluetooth and needs nothing
+extra.
 
 Cross-compiling for a Raspberry Pi sync box:
 
@@ -247,6 +249,18 @@ checked one at a time. No release is tagged until they have been.
 force pushes, no branch deletion. Run `cargo fmt`, `cargo clippy --all-targets
 --all-features -- -D warnings` and `cargo test --all-features` before opening
 one.
+
+CI also runs `cargo deny` and `cargo audit` (weekly, and on any dependency
+change), CodeQL, a typo check, and a build at the declared MSRV — plus a
+scheduled one against a fresh dependency resolution, which is what catches a
+transitive crate raising its own Rust requirement before it reaches users.
+Third-party Actions are pinned by commit SHA; see
+[`.github/SECURITY.md`](.github/SECURITY.md).
+
+The pull request template asks what you ran the change against, and singles out
+"a real RICOH GR III" as its own box. That is not ceremony: the emulator shares
+its assumptions with the code, so for anything touching `protocol.rs`, `ble.rs`
+or a timeout, only hardware is evidence.
 
 ## Provenance
 

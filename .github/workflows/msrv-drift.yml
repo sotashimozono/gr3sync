@@ -1,0 +1,63 @@
+name: msrv-drift
+
+# `rust-version = "1.85"` in Cargo.toml is a promise to anyone installing this.
+# Two different things can break it, and they need two different checks:
+#
+#   ci.yml's `msrv` job  — does our own code still build at 1.85, against the
+#                          dependency versions in the committed lock file?
+#   this workflow        — does it still build at 1.85 against *today's*
+#                          registry, with no lock file at all? A transitive
+#                          crate that raises its own rust-version breaks users
+#                          the moment their lock refreshes, long before it
+#                          breaks our pinned CI.
+#
+# The second failure is the one that arrives silently, so it gets a cron and a
+# tracking issue.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Monday 07:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - ".github/workflows/msrv-drift.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: MSRV 1.85 against the latest registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.85"
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Resolve afresh, with no committed lock file
+        run: |
+          rm -f Cargo.lock
+          cargo build --all-features
+
+  notify-cron-failure:
+    name: notify (cron failure)
+    needs: [drift]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open a tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create \
+            --title "msrv-drift: a dependency now needs more than Rust 1.85 ($(date -u +%Y-%m-%d))" \
+            --label "ci,dependencies" \
+            --body "Building at the declared MSRV against a fresh dependency resolution failed. See ${RUN_URL}. Either raise \`rust-version\` in Cargo.toml or pin the offending crate. Opened automatically." \
+            --repo "${{ github.repository }}"

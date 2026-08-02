@@ -1,0 +1,19 @@
+# Configuration for crate-ci/typos, run by .github/workflows/typos.yml.
+
+[files]
+# The lock file is generated, and hex-heavy.
+extend-exclude = ["Cargo.lock"]
+
+[default.extend-words]
+# Project and protocol nouns that are not misspellings.
+DNG = "DNG"      # Adobe's raw format, the GR III's raw extension
+nd = "nd"        # "Grad ND", the camera's graduated neutral-density filter
+ba = "ba"        # appears inside UUIDs
+
+[default]
+# UUIDs, hex characteristic values and BLE addresses are not prose.
+extend-ignore-re = [
+    "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    "\\b[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}\\b",
+    "\\b[0-9a-f]{40}\\b",
+]
