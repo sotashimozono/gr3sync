@@ -11,33 +11,31 @@ Three layers, in increasing order of what they cost and what they buy.
 
 ## Read this before trusting a green run
 
-**The emulator is built from the same reverse-engineered specification as
-gr3sync.** It is an oracle that shares a convention with the thing it is
-testing. If the specification is wrong about what `Network Type = 1` does, the
-emulator is wrong in exactly the same way and every test still passes.
+The BLE layer serves a table **recorded from a real camera** —
+[`gatt-captured.json`](gatt-captured.json), a RICOH GR IIIx on firmware 1.41.
+Every value in it is a byte that camera sent, and every write permission is one
+that camera advertised. The Wi-Fi layers are still a model of the endpoints,
+not a recording.
 
-So an emulator run answers:
+That changes what a green run means, but not into everything. It answers:
 
 - ✅ does the transport chain actually carry reads and writes end to end?
 - ✅ does gr3sync issue the sequence of operations we think it does?
+- ✅ **does gr3sync decode the bytes a real GR IIIx sends?**
+- ✅ **does it stay off the characteristics that camera refuses writes on?**
 - ✅ has anything regressed since it last worked?
 - ✅ do the CLI's exit codes and JSON output hold up across the process boundary?
 
-and it cannot answer:
+and it still cannot answer:
 
-- ❌ does a real camera accept `Network Type = 1` from a non-Image-Sync client?
+- ❌ does the camera *act* on `Network Type = 1` — does the radio come up?
 - ❌ how long does the access point take to come up?
-- ❌ does BLE reach a camera that is switched off?
-- ❌ are the Storage Information and Battery Level byte layouts right?
+- ❌ does any of it behave the same on a GR III, or on another firmware?
 
-Those need hardware. The repository README's "Verification status" is the
-authority on which is which.
+The table is one body's answers, frozen. It cannot show you a camera changing
+its mind. The repository README's "Verification status" remains the authority.
 
-## Making it a real oracle
-
-The GATT table is data, not code, and it can be replaced with one captured from
-an actual camera. Once that is done the table encodes observation rather than
-assumption, and the same tests start meaning something:
+## Where the captured table came from
 
 ```sh
 # with the camera in range, once
@@ -48,12 +46,24 @@ gr3-emulator gatt --from-doctor doctor.json > emulator/gatt-captured.json
 python3 emulator/ble_peripheral.py --table emulator/gatt-captured.json
 ```
 
-A table built this way is labelled `"provenance": "captured_from_hardware"`;
-the default one is labelled `"specification"` and the peripheral prints a
-warning about it on startup. Nothing silently pretends to be evidence.
+The committed capture is exactly that, from the session recorded in issue #9,
+with one edit: the camera's Wi-Fi passphrase is replaced by a synthetic value
+of the same length. Nothing else was touched.
 
-Characteristics the real camera did **not** expose are dropped from a captured
-table, so a test then fails the same way the hardware would.
+A table built this way is labelled `"provenance": "captured_from_hardware"`.
+The fallback is labelled `"specification"`, and the peripheral prints a warning
+about it on startup; the `e2e-ble` job asserts that warning appears for one and
+not for the other, so it cannot go quiet unnoticed.
+
+Two things a capture carries that a specification cannot:
+
+- characteristics the real camera did **not** expose are absent, so a test
+  fails the same way the hardware would;
+- write permissions are the camera's own. A report captured before `doctor`
+  recorded them yields a **read-only** table rather than a fully writable one —
+  an emulator that refuses a legitimate write fails a test where you can see
+  it, while one that accepts a write the camera would reject hides the bug the
+  read-only guard exists to catch.
 
 ## The Wi-Fi layer
 

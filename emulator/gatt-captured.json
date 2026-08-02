@@ -1,0 +1,89 @@
+{
+  "provenance": "captured_from_hardware",
+  "characteristics": {
+    "0d2fc4d5-5cb3-4cde-b519-445e599957d8": {
+      "name": "serial_number",
+      "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
+      "value": "3031323835343400",
+      "writable": false
+    },
+    "0f38279c-fe9e-461b-8596-81287e8c9a81": {
+      "name": "passphrase",
+      "service": "f37f568f-9071-445d-a938-5441f2e82399",
+      "value": "656d756c617465640000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "writable": true
+    },
+    "1452335a-ec7f-4877-b8ab-0f72e18bb295": {
+      "name": "operation_mode",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "02",
+      "writable": true
+    },
+    "35fe6272-6aa5-44d9-88e1-f09427f51a71": {
+      "name": "model_number",
+      "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
+      "value": "5249434f482047522049494978",
+      "writable": false
+    },
+    "51de6ebc-0f22-4357-87e4-b1fa1d385ab8": {
+      "name": "channel",
+      "service": "f37f568f-9071-445d-a938-5441f2e82399",
+      "value": "06",
+      "writable": true
+    },
+    "875fc41d-4980-434c-a653-fd4a4d4410c4": {
+      "name": "battery_level",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "42",
+      "writable": false
+    },
+    "90638e5a-e77d-409d-b550-78f7e1ca5ab4": {
+      "name": "ssid",
+      "service": "f37f568f-9071-445d-a938-5441f2e82399",
+      "value": "47525f463332334433000000000000000000000000000000000000000000000000",
+      "writable": true
+    },
+    "9111cdd0-9f01-45c4-a2d4-e09e8fb0424d": {
+      "name": "network_type",
+      "service": "f37f568f-9071-445d-a938-5441f2e82399",
+      "value": "00",
+      "writable": true
+    },
+    "97e34da2-2e1a-405b-b80d-f8f0aa9cc51c": {
+      "name": "bluetooth_device_name",
+      "service": "6fe9d605-3122-4fce-a0ae-fd9bc08ff879",
+      "value": "42303a36353a33413a46353a34383a443700",
+      "writable": false
+    },
+    "a0c10148-8865-4470-9631-8f36d79a41a5": {
+      "name": "storage_information",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "02000100000100000000000000000201010001012d080000a24e000002",
+      "writable": false
+    },
+    "b4eb8905-7411-40a6-a367-2834c2157ea7": {
+      "name": "firmware_revision",
+      "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
+      "value": "312e3431000000000000",
+      "writable": false
+    },
+    "b58ce84c-0666-4de9-bec8-2d27b27b3211": {
+      "name": "camera_power",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "01",
+      "writable": true
+    },
+    "d8676c92-dc4e-4d9e-acce-b9e251ddcc0c": {
+      "name": "ble_enable_condition",
+      "service": "0f291746-0c80-4726-87a7-3c501fd3b4b6",
+      "value": "01",
+      "writable": true
+    },
+    "d9ae1c06-447d-4dea-8b7d-fc8b19c2cdae": {
+      "name": "file_transfer_list",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "0000",
+      "writable": false
+    }
+  }
+}

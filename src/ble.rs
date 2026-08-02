@@ -51,16 +51,33 @@ pub struct WlanCredentials {
     pub passphrase: String,
 }
 
+/// What a peer says it will let you do with a characteristic.
+///
+/// Recorded by `doctor` so a captured table can be rebuilt with the camera's
+/// own permissions. Without it, seeding the emulator from hardware makes every
+/// characteristic writable and quietly retires the guard that catches gr3sync
+/// scribbling on a read-only one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct CharProperties {
+    pub read: bool,
+    pub write: bool,
+    pub write_without_response: bool,
+    pub notify: bool,
+    pub indicate: bool,
+}
+
 /// The whole Bluetooth surface gr3sync needs.
 ///
-/// Four operations. Implemented once against `btleplug` and once against an
-/// in-memory table in the tests.
+/// Implemented once against `btleplug` and once against an in-memory table in
+/// the tests.
 pub trait Gatt {
     fn read(&self, uuid: Uuid) -> impl Future<Output = Result<Vec<u8>>> + Send;
     fn write(&self, uuid: Uuid, data: &[u8]) -> impl Future<Output = Result<()>> + Send;
     /// Which characteristics the peer actually exposes. Used by `doctor` to
     /// report a camera whose GATT table does not match the documented profile.
     fn available(&self) -> Vec<Uuid>;
+    /// What the peer advertises it will allow on one characteristic.
+    fn properties(&self, uuid: Uuid) -> CharProperties;
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +324,21 @@ impl Gatt for BtleplugGatt {
     fn available(&self) -> Vec<Uuid> {
         self.characteristics.keys().copied().collect()
     }
+
+    fn properties(&self, uuid: Uuid) -> CharProperties {
+        use btleplug::api::CharPropFlags as F;
+        let Some(characteristic) = self.characteristics.get(&uuid) else {
+            return CharProperties::default();
+        };
+        let flags = characteristic.properties;
+        CharProperties {
+            read: flags.contains(F::READ),
+            write: flags.contains(F::WRITE),
+            write_without_response: flags.contains(F::WRITE_WITHOUT_RESPONSE),
+            notify: flags.contains(F::NOTIFY),
+            indicate: flags.contains(F::INDICATE),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -528,6 +560,17 @@ mod tests {
 
         fn available(&self) -> Vec<Uuid> {
             self.values.lock().unwrap().keys().copied().collect()
+        }
+
+        fn properties(&self, uuid: Uuid) -> CharProperties {
+            if !self.values.lock().unwrap().contains_key(&uuid) {
+                return CharProperties::default();
+            }
+            CharProperties {
+                read: true,
+                write: true,
+                ..CharProperties::default()
+            }
         }
     }
 
