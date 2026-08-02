@@ -1,0 +1,19 @@
+# CODEOWNERS for gr3sync
+#
+# GitHub auto-assigns the matching owner as a reviewer on every PR touching
+# these paths. This file does not enforce review — branch protection does.
+
+* @sotashimozono
+
+# The reverse-engineered constants. A wrong UUID or a wrong byte here is not a
+# compile error and not a test failure: it is a camera that ignores us, or
+# worse, one that is written to somewhere unintended.
+/src/protocol.rs @sotashimozono
+
+# Anything that writes to the camera or rewrites the host's network state.
+/src/ble.rs      @sotashimozono
+/src/netlink.rs  @sotashimozono
+
+/.github/workflows/ @sotashimozono
+/Cargo.toml         @sotashimozono
+/Cargo.lock         @sotashimozono

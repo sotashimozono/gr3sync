@@ -1,18 +1,49 @@
+# Weekly, Monday 07:00 UTC — the same slot as the audit cron, so dependency
+# churn and advisory scanning land together.
+#
+# Auto-merge is deliberately not configured. btleplug talks to a kernel
+# Bluetooth stack and ureq parses network input; both deserve a human look.
+# Minor and patch updates are grouped into one PR to keep that look cheap.
+# Security advisories are excluded from grouping by Dependabot's default and
+# arrive as individual PRs, which is what we want.
+
 version: 2
+
 updates:
-  # btleplug and ureq are the two dependencies that carry real risk here — one
-  # talks to a kernel Bluetooth stack, the other parses network input — so
-  # staying current matters more than the churn costs.
   - package-ecosystem: cargo
-    directory: /
+    directory: "/"
     schedule:
       interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: UTC
     open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    labels:
+      - dependencies
+      - rust
     groups:
-      minor-and-patch:
-        update-types: [minor, patch]
+      cargo-minor-and-patch:
+        patterns: ["*"]
+        update-types:
+          - minor
+          - patch
 
+  # Third-party Actions are pinned by SHA (see .github/SECURITY.md), which
+  # means they cannot float — Dependabot is the only thing that moves them.
   - package-ecosystem: github-actions
-    directory: /
+    directory: "/"
     schedule:
-      interval: monthly
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(ci)"
+      include: scope
+    labels:
+      - dependencies
+      - github-actions

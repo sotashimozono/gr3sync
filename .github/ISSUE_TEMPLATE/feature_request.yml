@@ -1,0 +1,39 @@
+name: "Feature request"
+description: "Suggest something gr3sync should do."
+title: "[Feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: "The problem"
+      description: "What are you trying to do that gr3sync makes hard or impossible?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "What you would like instead"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: shape
+    attributes:
+      label: "Does this belong in gr3sync, or in something wrapping it?"
+      description: >-
+        gr3sync is a CLI with a `--json` event stream precisely so other tools
+        can drive it. A photo-manager integration or a scheduler usually
+        belongs outside; a new camera operation usually belongs inside.
+      options:
+        - "Inside gr3sync"
+        - "A wrapper around gr3sync"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "What you have tried or considered"

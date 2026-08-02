@@ -1,0 +1,43 @@
+# cargo-deny configuration. Run in CI by .github/workflows/audit.yml.
+#
+#   cargo deny check --all-features
+
+[graph]
+all-features = true
+
+[advisories]
+# Any unresolved advisory in the dependency tree fails the build. There is no
+# reason to tolerate one in a tree this small.
+yanked = "deny"
+
+[licenses]
+# Permissive licences plus MPL-2.0, which is file-level copyleft and does not
+# reach a statically linked binary's own source.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Duplicate versions are noise, not danger, in a tree this size — worth seeing,
+# not worth blocking a merge over.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# Everything comes from crates.io. A git dependency appearing here would be a
+# real change in the trust surface and should be a deliberate edit to this file.
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

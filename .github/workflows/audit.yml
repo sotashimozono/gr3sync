@@ -1,0 +1,63 @@
+name: audit
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/audit.yml"
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 7 * * 1" # Monday 07:00 UTC, same slot as Dependabot
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          command: check
+          # --all-features so the emulator's dependency surface is audited too,
+          # even though it never ships.
+          arguments: --all-features
+
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: rustsec/audit-check@858dc40f52ca2b8570b7a997c1c4e35c6fc9a432 # node24
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # A scheduled failure on a quiet repository notifies nobody: GitHub does not
+  # email for cron-only failures once a repo goes inactive. Push and PR
+  # failures already show up in the Checks UI, so this is gated on schedule.
+  notify-cron-failure:
+    name: notify (cron failure)
+    needs: [cargo-deny, cargo-audit]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open a tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create \
+            --title "audit: scheduled run failed ($(date -u +%Y-%m-%d))" \
+            --label "ci,dependencies" \
+            --body "The scheduled \`audit\` workflow failed. See ${RUN_URL}. Opened automatically; close it once the advisory is triaged." \
+            --repo "${{ github.repository }}"

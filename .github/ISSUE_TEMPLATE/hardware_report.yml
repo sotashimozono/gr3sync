@@ -1,0 +1,72 @@
+name: "Hardware observation"
+description: "What a real camera actually did. The most valuable report this project can receive."
+title: "[Hardware] "
+labels: ["hardware", "verification"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        gr3sync is built from a reverse-engineered specification, and its test
+        suite is built from the same one — so the tests agree with our
+        assumptions whether or not a real camera does. The README's
+        "Verification status" lists what is still unknown.
+
+        **An observation from real hardware is the only thing that can close
+        one of those gaps.** Contradictions are as welcome as confirmations;
+        a report that says "this does not work" is worth more than silence.
+
+  - type: dropdown
+    id: claim
+    attributes:
+      label: "Which open question does this touch?"
+      options:
+        - "Does the camera accept Network Type = 1 from a non-Image-Sync client?"
+        - "How long does the access point take to come up?"
+        - "Does BLE reach a camera that is switched off (Enable Condition = On anytime)?"
+        - "Are the Storage Information / Battery Level byte layouts right?"
+        - "Does pairing a host displace the phone's Image Sync pairing?"
+        - "networksetup behaviour on current macOS"
+        - "something else the documentation gets wrong"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: "Outcome"
+      options:
+        - "Worked as documented"
+        - "Worked, but differently from documented"
+        - "Did not work"
+    validations:
+      required: true
+
+  - type: input
+    id: camera
+    attributes:
+      label: "Camera and firmware"
+      placeholder: "RICOH GR III, firmware 1.90"
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: "What you observed"
+      description: >-
+        Commands run and their output. Timings are valuable: how many seconds
+        until the access point answered, how long a wake took.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "gr3sync doctor --json"
+      description: >-
+        The camera's real GATT table. This can be replayed as an emulator
+        (`gr3-emulator gatt --from-doctor`), which turns the test suite from an
+        assumption into a recording — so pasting it here helps everyone, not
+        just this issue. Contains no credentials.
+      render: json
