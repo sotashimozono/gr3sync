@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # btleplug and ureq are the two dependencies that carry real risk here — one
+  # talks to a kernel Bluetooth stack, the other parses network input — so
+  # staying current matters more than the churn costs.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

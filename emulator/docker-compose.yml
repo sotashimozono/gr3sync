@@ -1,0 +1,33 @@
+# The emulated camera on the address the real one uses.
+#
+#   docker compose -f emulator/docker-compose.yml up -d --build
+#   gr3sync list --host 192.168.0.1
+#   gr3sync pull /tmp/shots --no-ble --wifi-backend manual
+#   docker compose -f emulator/docker-compose.yml down
+#
+# `--no-ble` is required: nothing here emulates Bluetooth. For that, see
+# ble_peripheral.py and the `e2e-ble` CI job.
+
+services:
+  camera:
+    build:
+      context: ..
+      dockerfile: emulator/Dockerfile
+    # The GR III's HTTP server address is fixed in firmware, so the test should
+    # not have to pass --host at all.
+    networks:
+      camera:
+        ipv4_address: 192.168.0.1
+    command: ["--bind", "0.0.0.0:80", "--pairs", "5"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/gr3-emulator", "gatt"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+networks:
+  camera:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.0.0/24

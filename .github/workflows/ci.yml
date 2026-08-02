@@ -27,13 +27,13 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      # --all-features throughout: the emulator-gated integration tests would
+      # otherwise be skipped silently, which looks exactly like passing.
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
 
   # The binary has to be usable on a machine that has never seen this project,
-  # which is the entire reason for shipping one static executable. Building it
-  # for real — and checking the subcommands that need no camera actually run —
-  # is what keeps that true.
+  # which is the entire reason for shipping one static executable.
   binary:
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +45,12 @@ jobs:
       - run: ./target/release/gr3sync --help
       - run: ./target/release/gr3sync backends
       - run: ./target/release/gr3sync config
+      - name: The emulator must not be in the shipped binary
+        run: |
+          ./target/release/gr3sync --help > /tmp/help
+          if grep -qi emulator /tmp/help; then
+            echo "test scaffolding leaked into the release binary"; exit 1
+          fi
       - name: A host with no Bluetooth must get advice, not a panic
         run: |
           set +e
@@ -52,8 +58,141 @@ jobs:
           status=$?
           echo "$output"
           [ "$status" -eq 2 ] || { echo "expected exit 2, got $status"; exit 1; }
-          case "$output" in
-            *panicked*) echo "a panic reached the user"; exit 1 ;;
-          esac
+          case "$output" in *panicked*) echo "a panic reached the user"; exit 1 ;; esac
       - name: Report the binary size
         run: ls -lh target/release/gr3sync
+
+  # The camera's HTTP address is fixed in firmware. Putting the emulator on
+  # 192.168.0.1 removes the last "but the test used a different host" caveat
+  # from the Wi-Fi half.
+  e2e-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - run: cargo build --release
+      - name: Start the emulated camera on 192.168.0.1
+        run: docker compose -f emulator/docker-compose.yml up -d --build
+      - name: Wait for it to answer
+        run: |
+          for _ in $(seq 1 30); do
+            curl -sf --max-time 2 http://192.168.0.1/v1/ping && exit 0
+            sleep 2
+          done
+          echo "camera never answered"; docker compose -f emulator/docker-compose.yml logs; exit 1
+      - name: Pull from the camera at its real address
+        run: |
+          set -euo pipefail
+          ./target/release/gr3sync list --host 192.168.0.1
+          ./target/release/gr3sync pull /tmp/shots --no-ble --wifi-backend manual </dev/null
+          test "$(find /tmp/shots -type f -name '*.JPG' | wc -l)" -eq 5
+          test "$(find /tmp/shots -type f -name '*.DNG' | wc -l)" -eq 5
+      - name: A second pull must download nothing
+        run: |
+          set -euo pipefail
+          ./target/release/gr3sync --json pull /tmp/shots --no-ble --wifi-backend manual </dev/null > /tmp/events.ndjson
+          tail -1 /tmp/events.ndjson | tee /dev/stderr | grep -q '"downloaded":\[\]'
+      - if: always()
+        run: docker compose -f emulator/docker-compose.yml logs
+      - if: always()
+        run: docker compose -f emulator/docker-compose.yml down
+
+  # The Bluetooth transport chain, for real: btleplug -> BlueZ -> kernel ->
+  # /dev/vhci -> a Bumble peripheral serving the camera's GATT table.
+  #
+  # NOT in the branch protection required checks yet. It has not been shown to
+  # be stable across runner images, and a required check that flakes is worse
+  # than one that is explicitly provisional. Read its result on the PR.
+  #
+  # NOTE what a green run here does and does not mean: the GATT table is built
+  # from the same reverse-engineered spec as gr3sync, so this proves the
+  # transport works and nothing has regressed — not that the protocol is right.
+  # See emulator/README.md.
+  e2e-ble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install BlueZ and Bumble
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config bluez dbus
+          pip install bumble
+
+      - name: Load the virtual HCI driver
+        run: |
+          sudo modprobe hci_vhci || sudo modprobe bluetooth
+          ls -l /dev/vhci
+          lsmod | grep -i vhci || true
+
+      - name: Start bluetoothd
+        run: |
+          sudo systemctl start dbus || sudo service dbus start || true
+          sudo /usr/libexec/bluetooth/bluetoothd --experimental &
+          sleep 3
+          sudo hciconfig -a || true
+
+      - run: cargo build --release --features emulator
+
+      - name: Serve the camera's GATT table over a virtual controller
+        run: |
+          ./target/release/gr3-emulator gatt > /tmp/gatt.json
+          cat /tmp/gatt.json
+          sudo -E python3 emulator/ble_peripheral.py --table /tmp/gatt.json > /tmp/peripheral.ndjson 2>/tmp/peripheral.err &
+          for _ in $(seq 1 30); do
+            grep -q '"event": "ready"' /tmp/peripheral.ndjson && break
+            sleep 1
+          done
+          echo "--- peripheral stdout ---"; cat /tmp/peripheral.ndjson
+          echo "--- peripheral stderr ---"; cat /tmp/peripheral.err
+          grep -q '"event": "ready"' /tmp/peripheral.ndjson
+          sudo hciconfig -a
+
+      - name: gr3sync must see the emulated camera
+        run: |
+          set -euo pipefail
+          sudo ./target/release/gr3sync --json scan --timeout 10 | tee /tmp/scan.json
+          grep -q GR_EMULATED /tmp/scan.json
+
+      - name: doctor must read the documented characteristics
+        run: |
+          set -euo pipefail
+          sudo ./target/release/gr3sync --json doctor --timeout 10 | tee /tmp/doctor.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open('/tmp/doctor.json'))
+          exposed = [r['name'] for r in report['documented'] if r['exposed']]
+          print('exposed:', exposed)
+          assert 'network_type' in exposed, exposed
+          assert 'camera_power' in exposed, exposed
+          PY
+
+      - name: wlan on must raise the access point over BLE
+        run: |
+          set -euo pipefail
+          sudo ./target/release/gr3sync --json wlan on --timeout 10 | tee /tmp/wlan.json
+          grep -q GR_EMULATED /tmp/wlan.json
+          # Assert on what the peripheral actually received, not only on what
+          # gr3sync claims it sent.
+          grep -q '"event": "write".*"name": "network_type".*"hex": "01"' /tmp/peripheral.ndjson \
+            || { echo "the peripheral never saw network_type = 01"; cat /tmp/peripheral.ndjson; exit 1; }
+          grep -q '"event": "access_point_up"' /tmp/peripheral.ndjson
+
+      - name: The round trip must be reproducible from the captured table
+        run: |
+          set -euo pipefail
+          ./target/release/gr3-emulator gatt --from-doctor /tmp/doctor.json > /tmp/captured.json
+          grep -q '"provenance": "captured_from_hardware"' /tmp/captured.json
+
+      - if: always()
+        name: Peripheral log
+        run: |
+          echo "--- stdout ---"; cat /tmp/peripheral.ndjson || true
+          echo "--- stderr ---"; cat /tmp/peripheral.err || true

@@ -181,7 +181,17 @@ keep_dirs   = true                  # dest/100RICOH/x.JPG vs dest/x.JPG
 
 Be aware of what has and has not been exercised.
 
-**Verified by `cargo test`, no hardware:**
+There is an emulated camera under `emulator/` — see
+[`emulator/README.md`](emulator/README.md). It is worth being precise about what
+that buys, because it is easy to over-read: the emulator is built from the *same
+reverse-engineered specification* as gr3sync, so it agrees with gr3sync's
+assumptions whether or not a real GR III does. It proves the transport chain
+carries the operations and guards against regressions. It cannot tell you the
+specification is right. (It stops being a shared-convention oracle once its GATT
+table is rebuilt from a real camera's `doctor --json` output, which is a
+supported path.)
+
+**Verified by `cargo test --all-features`, no hardware:**
 
 - the HTTP client and the whole download path, against a real socket server
   reproducing the camera's endpoints — including a transfer cut short mid-body
@@ -195,7 +205,15 @@ Be aware of what has and has not been exercised.
 - teardown ordering: the host's association is restored and the camera's AP is
   dropped even when the pull fails;
 - the BLE **protocol** — UUIDs, value encodings, and which GATT operations are
-  issued in which order — against an in-memory stand-in for the transport.
+  issued in which order — against an in-memory stand-in for the transport;
+- the CLI across the process boundary: argument parsing, config resolution, exit
+  codes (0 / 1 "some files failed" / 2 "could not run") and the newline-delimited
+  JSON contract, by running the real binary against the real emulator binary;
+- in CI, the same pull against a container holding the camera's actual address,
+  `192.168.0.1:80`;
+- in CI, the Bluetooth transport chain — btleplug → BlueZ → kernel → `/dev/vhci`
+  → a Bumble peripheral serving the camera's GATT table. Provisional: that job
+  is not a required check yet.
 
 **Not verified — needs a GR III in the room:**
 
@@ -212,6 +230,14 @@ Be aware of what has and has not been exercised.
 
 `gr3sync scan`, `info`, `doctor`, `wlan on` and `raw` exist so those can be
 checked one at a time. No release is tagged until they have been.
+
+## Contributing
+
+`main` is protected: pull request required, and `test (ubuntu-latest)`,
+`test (macos-latest)` and `binary` must pass. Squash or rebase merges only, no
+force pushes, no branch deletion. Run `cargo fmt`, `cargo clippy --all-targets
+--all-features -- -D warnings` and `cargo test --all-features` before opening
+one.
 
 ## Provenance
 

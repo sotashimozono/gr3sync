@@ -24,6 +24,19 @@ toml = "0.8"
 ureq = { version = "3", default-features = false }
 uuid = "1"
 
+[features]
+# The emulator is test/CI scaffolding: it must never be in a shipped binary.
+emulator = []
+
+[[bin]]
+name = "gr3sync"
+path = "src/main.rs"
+
+[[bin]]
+name = "gr3-emulator"
+path = "src/bin/gr3-emulator.rs"
+required-features = ["emulator"]
+
 [dev-dependencies]
 tempfile = "3"
 

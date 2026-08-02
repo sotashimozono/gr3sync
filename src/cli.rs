@@ -533,7 +533,16 @@ fn cmd_doctor(cli: &Cli, args: &BleArgs) -> Result<ExitCode> {
             } else {
                 serde_json::Value::Null
             };
-            rows.push(json!({ "name": name, "uuid": uuid.to_string(), "exposed": exposed, "value": value }));
+            rows.push(json!({
+                "name": name,
+                "uuid": uuid.to_string(),
+                // Recorded so `gr3-emulator gatt --from-doctor` can rebuild a
+                // peripheral from this report: a GATT client reaches a
+                // characteristic through its service, not by UUID alone.
+                "service": p::service_of(*uuid).map(|s| s.to_string()),
+                "exposed": exposed,
+                "value": value
+            }));
         }
         let known: Vec<Uuid> = p::KNOWN_CHARACTERISTICS.iter().map(|(_, u)| *u).collect();
         let unknown: Vec<String> = present

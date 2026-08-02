@@ -1,20 +1,23 @@
 //! HTTP client tests, driven against a real socket server.
 
+#![cfg(feature = "emulator")]
+
 mod common;
 
 use std::time::Duration;
 
-use common::{CardState, FakeCamera};
+use common::{camera_with, camera_with_three_pairs};
 use gr3sync::camera::{Camera, PhotoRef};
+use gr3sync::emulator::{Card, HttpCamera};
 use gr3sync::error::Error;
 
-fn camera_for(server: &FakeCamera) -> Camera {
+fn camera_for(server: &HttpCamera) -> Camera {
     Camera::new(server.host(), Duration::from_secs(10))
 }
 
 #[test]
 fn ping_and_props() {
-    let server = FakeCamera::start(CardState::with_three_pairs());
+    let server = camera_with_three_pairs();
     let camera = camera_for(&server);
     assert!(camera.ping());
 
@@ -42,7 +45,7 @@ fn an_unreachable_camera_reports_a_timeout_naming_the_host() {
 
 #[test]
 fn photos_are_listed_in_card_order() {
-    let server = FakeCamera::start(CardState::with_three_pairs());
+    let server = camera_with_three_pairs();
     let keys: Vec<String> = camera_for(&server)
         .photos()
         .unwrap()
@@ -63,7 +66,7 @@ fn photos_are_listed_in_card_order() {
 
 #[test]
 fn download_writes_the_body_and_leaves_no_part_file() {
-    let server = FakeCamera::start(CardState::with_three_pairs());
+    let server = camera_with_three_pairs();
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("out").join("R0000001.JPG");
 
@@ -72,7 +75,7 @@ fn download_writes_the_body_and_leaves_no_part_file() {
         .unwrap();
 
     assert_eq!(written, std::fs::metadata(&target).unwrap().len());
-    assert!(std::fs::read(&target).unwrap().starts_with(b"jpeg-"));
+    assert!(std::fs::read(&target).unwrap().starts_with(b"jpeg"));
     let leftovers: Vec<_> = std::fs::read_dir(target.parent().unwrap())
         .unwrap()
         .filter_map(|e| e.ok())
@@ -85,10 +88,10 @@ fn download_writes_the_body_and_leaves_no_part_file() {
 fn a_body_larger_than_ten_megabytes_arrives_intact() {
     // ureq's read_to_vec() caps bodies at 10 MB by default, which would refuse
     // every DNG this camera produces. The streaming path must not inherit that.
-    let mut state = CardState::new();
+    let mut card = Card::new();
     let body = vec![0xABu8; 12 * 1024 * 1024];
-    state.add("100RICOH", "R0000001.DNG", body.clone());
-    let server = FakeCamera::start(state);
+    card.add("100RICOH", "R0000001.DNG", body.clone());
+    let server = camera_with(card);
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("R0000001.DNG");
 
@@ -107,10 +110,10 @@ fn a_body_larger_than_ten_megabytes_arrives_intact() {
 fn an_interrupted_download_leaves_nothing_behind() {
     // A cut-short transfer must not leave a truncated file that a later run
     // would skip as "already downloaded".
-    let mut state = CardState::new();
-    state.add("100RICOH", "R0000009.JPG", vec![b'x'; 4096]);
-    state.broken.push("R0000009.JPG".into());
-    let server = FakeCamera::start(state);
+    let mut card = Card::new();
+    card.add("100RICOH", "R0000009.JPG", vec![b'x'; 4096]);
+    card.broken.push("R0000009.JPG".into());
+    let server = camera_with(card);
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("R0000009.JPG");
 
@@ -134,7 +137,7 @@ fn an_interrupted_download_leaves_nothing_behind() {
 
 #[test]
 fn an_api_error_code_is_surfaced_with_its_number() {
-    let server = FakeCamera::start(CardState::new());
+    let server = camera_with(Card::new());
     let err = camera_for(&server)
         .photo_info(&PhotoRef::new("100RICOH", "nope.JPG"))
         .unwrap_err();
@@ -143,9 +146,9 @@ fn an_api_error_code_is_surfaced_with_its_number() {
 
 #[test]
 fn a_gr2_is_detected_and_uses_the_legacy_download_path() {
-    let mut state = CardState::new();
-    state.model = "RICOH GR II".into();
-    let server = FakeCamera::start(state);
+    let mut card = Card::new();
+    card.model = "RICOH GR II".into();
+    let server = camera_with(card);
     assert!(camera_for(&server).props().unwrap().is_legacy_path());
 }
 
@@ -158,6 +161,6 @@ fn finish_wlan_tolerates_a_dead_connection() {
 
 #[test]
 fn an_empty_card_lists_nothing_without_erroring() {
-    let server = FakeCamera::start(CardState::new());
+    let server = camera_with(Card::new());
     assert!(camera_for(&server).photos().unwrap().is_empty());
 }

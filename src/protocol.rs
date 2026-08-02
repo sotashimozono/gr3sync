@@ -74,6 +74,30 @@ pub const KNOWN_CHARACTERISTICS: &[(&str, Uuid)] = &[
     ("channel", CHAR_CHANNEL),
 ];
 
+/// Which service each known characteristic belongs to.
+///
+/// A GATT client finds characteristics through their service, so anything that
+/// reconstructs the camera's table — the emulator, `doctor`'s report — needs
+/// this mapping and cannot recover it from the characteristic UUID alone.
+pub fn service_of(characteristic: Uuid) -> Option<Uuid> {
+    Some(match characteristic {
+        CHAR_MODEL_NUMBER | CHAR_FIRMWARE_REVISION | CHAR_SERIAL_NUMBER => {
+            SERVICE_CAMERA_INFORMATION
+        }
+        CHAR_BLUETOOTH_DEVICE_NAME => SERVICE_BLUETOOTH_INFORMATION,
+        CHAR_CAMERA_POWER
+        | CHAR_OPERATION_MODE
+        | CHAR_BATTERY_LEVEL
+        | CHAR_STORAGE_INFORMATION
+        | CHAR_FILE_TRANSFER_LIST
+        | CHAR_POWER_OFF_DURING_TRANSFER
+        | CHAR_CAMERA_SERVICE_NOTIFICATION => SERVICE_CAMERA,
+        CHAR_NETWORK_TYPE | CHAR_SSID | CHAR_PASSPHRASE | CHAR_CHANNEL => SERVICE_WLAN_CONTROL,
+        CHAR_BLE_ENABLE_CONDITION | CHAR_PAIRED_DEVICE_NAME => SERVICE_BLUETOOTH_CONTROL,
+        _ => return None,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Enumerated values
 // ---------------------------------------------------------------------------
@@ -308,6 +332,29 @@ mod tests {
                 "{service} is both"
             );
         }
+    }
+
+    #[test]
+    fn every_known_characteristic_belongs_to_a_service() {
+        // A characteristic with no service cannot be reconstructed by the
+        // emulator, and would silently go missing from its GATT table.
+        for (name, uuid) in KNOWN_CHARACTERISTICS {
+            assert!(service_of(*uuid).is_some(), "{name} has no service");
+        }
+    }
+
+    #[test]
+    fn an_unknown_characteristic_has_no_service() {
+        assert!(service_of(Uuid::nil()).is_none());
+    }
+
+    #[test]
+    fn the_wlan_characteristics_share_one_service() {
+        let wlan = service_of(CHAR_NETWORK_TYPE).unwrap();
+        assert_eq!(wlan, SERVICE_WLAN_CONTROL);
+        assert_eq!(service_of(CHAR_SSID), Some(wlan));
+        assert_eq!(service_of(CHAR_PASSPHRASE), Some(wlan));
+        assert_ne!(service_of(CHAR_CAMERA_POWER), Some(wlan));
     }
 
     #[test]
