@@ -22,7 +22,10 @@ gr3sync -> /home/you/Pictures/GR3
 
 The camera stays in your bag for all of that.
 
-> **Unofficial.** Nothing here is documented or endorsed by RICOH. See
+> **Unofficial, and only half proven.** Nothing here is documented or endorsed
+> by RICOH. The Bluetooth half of that transcript has been run against a real
+> camera; the Wi-Fi half has not, so the session above is what gr3sync is built
+> to do rather than one anybody has recorded end to end. See
 > [Provenance](#provenance) and [Verification status](#verification-status).
 
 ## Why this exists
@@ -37,10 +40,20 @@ existing tools each cover only one leg:
 | [dkogan/ricoh-download](https://github.com/dkogan/ricoh-download) | Wi-Fi HTTP download + network restore | turn Wi-Fi on by hand |
 | [tomdymond/pi-python-ricohgr](https://github.com/tomdymond/pi-python-ricohgr) | polls for the camera SSID | turn Wi-Fi on by hand |
 | [hhornbacher/gr3x-fw-hack](https://github.com/hhornbacher/gr3x-fw-hack) | firmware research | — (does not boot) |
+| [Nielk74/ricoh-gr3-android](https://github.com/Nielk74/ricoh-gr3-android) | BLE **and** Wi-Fi, on Android | turn Wi-Fi on by hand — the wake write ships disabled, because their camera rejects it |
+| [CursedHardware/ricoh-wireless-protocol](https://github.com/CursedHardware/ricoh-wireless-protocol) | an OpenAPI spec of `/v1/` plus a decrypted BLE definition | write all the code |
 
 gr3sync joins the two legs: BLE **wakes the camera and raises its access
 point**, reads the SSID and passphrase back, and only then does the HTTP
 download the other tools already do well. The manual step disappears.
+
+The last row is the one to read carefully. Nielk74 got there first and found
+the wake write **rejected with GATT error `0x80`** on a GR III running firmware
+1.92 and 2.10, which is why their app ships with it turned off. On the GR IIIx
+running 1.41 that this project is tested against, the same write is accepted —
+see [Verification status](#verification-status). Whether that is the model or
+the firmware is unresolved, so "the manual step disappears" is a claim about
+one camera until someone else's says otherwise.
 
 ## How it works
 
@@ -81,6 +94,15 @@ verified in CI at every dependency change, not just asserted in the manifest.
 On Linux you need libdbus at build time (`libdbus-1-dev` / `dbus-devel`), which
 is what `btleplug` links against; macOS uses CoreBluetooth and needs nothing
 extra.
+
+Windows is not a supported target, but the Bluetooth half works there and is
+where this project's hardware testing happens. Two things to know: there is no
+`netsh` Wi-Fi backend, so `pull` cannot switch networks for you and `gr3sync
+backends` offers only `manual`; and building for `x86_64-pc-windows-gnu` needs
+a real MinGW-w64 on `PATH`, because the `windows` crate generates its import
+libraries with `dlltool` and the copy inside rustup's `rust-mingw` has no
+assembler to call. Substituting `llvm-dlltool` produces a binary that faults
+before `main`.
 
 Cross-compiling for a Raspberry Pi sync box:
 
@@ -216,22 +238,52 @@ supported path.)
 - in CI, that the Bumble peripheral serving the camera's GATT table starts and
   advertises against an in-process controller.
 
-**Not verified — needs a GR III in the room:**
+**Verified against one real camera** — a **RICOH GR IIIx on firmware 1.41**,
+bonded to a Windows host, `btleplug`'s WinRT backend. One body and one firmware
+is not the same as "the GR line", and where that matters it is said below.
+Working and raw bytes are in [#9](https://github.com/sotashimozono/gr3sync/issues/9),
+[#10](https://github.com/sotashimozono/gr3sync/issues/10) and
+[#23](https://github.com/sotashimozono/gr3sync/issues/23):
 
-- that a real camera accepts `Network Type = 1` from a non-Image-Sync client and
-  actually raises its access point;
-- how long the camera takes to bring the AP up (the 3 s settle and 45 s join
-  timeout are estimates, not measurements);
-- whether waking a fully powered-off camera over BLE works with
-  `Enable Condition = On anytime`, as the specification implies;
-- the real byte layouts of Storage Information and Battery Level, decoded from a
-  reverse-engineered field list rather than from observed bytes;
+- **the camera accepts `Network Type = 1` from us and raises its access point.**
+  This is the claim the whole project rests on. `wlan on` returned `ApMode`, the
+  AP was seen broadcasting WPA2-Personal from a passive scan, and `wlan off`
+  brought it down again. It is also where one body is least sufficient: an
+  Android project measured the same write **rejected with `0x80`** on a GR III
+  running 1.92 and 2.10, so either the firmware or the model decides, and which
+  one is still open;
+- the camera answers BLE while switched off and keeps advertising, so
+  `Enable Condition = On anytime` does what the specification says;
+- every one of the 15 documented characteristics is exposed, plus 48 that
+  gr3sync does not know about;
+- the byte layouts of Battery Level and Storage Information — both of which the
+  reverse-engineered field list had wrong, and both of which failed quietly:
+  the battery read errored and took the `min_battery` floor down with it, and
+  the storage decode reported the internal memory while dropping the SD card;
+- `btleplug`'s WinRT backend against this device.
+
+**Not verified — still needs a camera in the room:**
+
+- **the Wi-Fi half against a real camera.** Nothing has been downloaded off a
+  real card. The HTTP client is exercised only against the emulator;
+- how long the camera takes to bring the AP up, and how long from joining until
+  `/v1/ping` answers. The 3 s settle and 45 s join timeout remain estimates.
+  Measuring them needs a host with a second network path — joining the camera's
+  AP on a single-adapter machine cuts the network the run is being driven from;
+- whether `Camera Power` reports the body's power state. A successful
+  `Camera Power = Off` write is followed by reads of `On` from every later
+  session. If a session can never observe `Off`, then `woke_it` is never true
+  and `power_off` silently never fires;
 - everything about `networksetup` on current macOS;
 - `btleplug`'s CoreBluetooth backend against this particular device;
-- the Bluetooth transport chain itself — btleplug → BlueZ → kernel → controller.
-  GitHub-hosted runners ship a kernel with no Bluetooth modules at all, so it
-  cannot be exercised there; it needs a self-hosted Linux runner or a developer
-  machine. See [`emulator/README.md`](emulator/README.md).
+- the Bluetooth transport chain on Linux — btleplug → BlueZ → kernel →
+  controller. GitHub-hosted runners ship a kernel with no Bluetooth modules at
+  all, so it cannot be exercised there; it needs a self-hosted Linux runner or a
+  developer machine. See [`emulator/README.md`](emulator/README.md).
+
+**Known unreliable:** roughly one GATT connect in three fails with
+`could not connect: Not connected` — always the first attempt after a previous
+session, always fine on retry, and gr3sync does not retry.
 
 On macOS, Bluetooth is gated per application and the OS **terminates** a process
 that uses it without permission, writing nothing to stderr. gr3sync prints a
@@ -240,7 +292,8 @@ to report. If a Bluetooth subcommand exits with no further message, allow the
 binary under System Settings > Privacy & Security > Bluetooth.
 
 `gr3sync scan`, `info`, `doctor`, `wlan on` and `raw` exist so those can be
-checked one at a time. No release is tagged until they have been.
+checked one at a time. All five have now been run against a camera; `pull` has
+not, and no release is tagged until it has.
 
 ## Contributing
 
@@ -270,6 +323,15 @@ The BLE UUIDs come from
 [firmware strings dump](https://notes.secretsauce.net/notes/2022/06/16_ricoh-gr-iiix-80211-reverse-engineering.html);
 the JSON envelope shapes match what [clyang/GRsync](https://github.com/clyang/GRsync)
 consumes in practice. Use at your own risk.
+
+Two better sources than the ones gr3sync was built from, found later:
+[CursedHardware/ricoh-wireless-protocol](https://github.com/CursedHardware/ricoh-wireless-protocol),
+an OpenAPI spec of the `/v1/` API with a decrypted BLE definition, and RICOH's
+own [theta-api-specs](https://github.com/ricohapi/theta-api-specs) — much of
+this GATT profile is officially published for the THETA line, so the UUIDs here
+are not purely reverse-engineered. Where the two disagree with what the camera
+actually sent, the camera wins; that is what
+[Verification status](#verification-status) records.
 
 ## License
 
