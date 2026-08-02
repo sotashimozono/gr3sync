@@ -650,7 +650,19 @@ mod tests {
     #[test]
     fn a_malformed_battery_value_is_an_error_not_a_zero() {
         let session = session();
-        session.gatt().set(p::CHAR_BATTERY_LEVEL, vec![0x58]);
+        session.gatt().set(p::CHAR_BATTERY_LEVEL, Vec::new());
         assert!(block_on(session.battery()).is_err());
+    }
+
+    #[test]
+    fn a_one_byte_battery_value_is_a_level_not_a_malformed_read() {
+        // What a GR IIIx on firmware 1.41 actually returns. Rejecting it made
+        // `info` report the battery as unavailable and, worse, disarmed the
+        // `min_battery` floor, because a failed battery read is non-fatal.
+        let session = session();
+        session.gatt().set(p::CHAR_BATTERY_LEVEL, vec![0x58]);
+        let battery = block_on(session.battery()).unwrap();
+        assert_eq!(battery.level, 88);
+        assert!(!battery.on_ac());
     }
 }
