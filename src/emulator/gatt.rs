@@ -130,10 +130,15 @@ impl GattTable {
             vec![p::CameraPower::Off.as_i8() as u8],
             true,
         );
+        // `BleStartup`, not `Capture`: this table declares the camera off, and
+        // a body that is off reports "awake because Bluetooth woke me" by the
+        // time a GATT read arrives. Off beside Capture is a pair no real camera
+        // sends, and it is what gr3sync reads to decide whether the camera is
+        // its to switch off again.
         put(
             p::CHAR_OPERATION_MODE,
             "operation_mode",
-            vec![p::OperationMode::Capture.as_i8() as u8],
+            vec![p::OperationMode::BleStartup.as_i8() as u8],
             true,
         );
         // 88%, running on battery.

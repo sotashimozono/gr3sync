@@ -191,9 +191,8 @@ async fn ble_bring_up_inner<G: ble::Gatt>(
     // synced, so this must not abort the run.
     let model = session.model().await.ok();
 
-    let previous = session.wake(options.wake_settle).await?;
-    let woke_it = previous != p::CameraPower::On;
-    emit!(sink, {"event": "ble.awake", "was": previous.name(), "woken_by_us": woke_it});
+    let woke_it = session.wake(options.wake_settle).await?;
+    emit!(sink, {"event": "ble.awake", "woken_by_us": woke_it});
 
     let mut battery = None;
     match session.battery().await {
