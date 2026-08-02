@@ -211,9 +211,8 @@ supported path.)
   JSON contract, by running the real binary against the real emulator binary;
 - in CI, the same pull against a container holding the camera's actual address,
   `192.168.0.1:80`;
-- in CI, the Bluetooth transport chain — btleplug → BlueZ → kernel → `/dev/vhci`
-  → a Bumble peripheral serving the camera's GATT table. Provisional: that job
-  is not a required check yet.
+- in CI, that the Bumble peripheral serving the camera's GATT table starts and
+  advertises against an in-process controller.
 
 **Not verified — needs a GR III in the room:**
 
@@ -226,7 +225,17 @@ supported path.)
 - the real byte layouts of Storage Information and Battery Level, decoded from a
   reverse-engineered field list rather than from observed bytes;
 - everything about `networksetup` on current macOS;
-- `btleplug`'s CoreBluetooth backend against this particular device.
+- `btleplug`'s CoreBluetooth backend against this particular device;
+- the Bluetooth transport chain itself — btleplug → BlueZ → kernel → controller.
+  GitHub-hosted runners ship a kernel with no Bluetooth modules at all, so it
+  cannot be exercised there; it needs a self-hosted Linux runner or a developer
+  machine. See [`emulator/README.md`](emulator/README.md).
+
+On macOS, Bluetooth is gated per application and the OS **terminates** a process
+that uses it without permission, writing nothing to stderr. gr3sync prints a
+hint before touching CoreBluetooth, because after the kill there is nothing left
+to report. If a Bluetooth subcommand exits with no further message, allow the
+binary under System Settings > Privacy & Security > Bluetooth.
 
 `gr3sync scan`, `info`, `doctor`, `wlan on` and `raw` exist so those can be
 checked one at a time. No release is tagged until they have been.

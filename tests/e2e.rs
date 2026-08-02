@@ -378,9 +378,19 @@ fn a_typo_in_the_config_stops_the_run_instead_of_syncing_somewhere_else() {
 }
 
 #[test]
-fn bluetooth_subcommands_fail_cleanly_where_there_is_no_adapter() {
-    // CI runners have no Bluetooth. The requirement is not that these work, but
-    // that they fail as exit 2 with an actionable message and never a panic.
+fn bluetooth_subcommands_leave_the_user_with_something_to_act_on() {
+    // CI runners have no usable Bluetooth. The requirement is not that these
+    // work, but that the user is never left with silence.
+    //
+    // The two platforms fail differently, and both are covered here:
+    //
+    // * Linux without an adapter -> gr3sync catches it and prints
+    //   "gr3sync: Bluetooth is unavailable: ...".
+    // * macOS without Bluetooth permission -> the OS *terminates the process*.
+    //   There is no error to catch and nothing is written to stderr by the
+    //   kill, so the only thing that can help is the hint gr3sync prints
+    //   before touching CoreBluetooth. Observed on a macos-latest runner:
+    //   non-zero exit, completely empty stderr, before the hint existed.
     let (home, _) = sandbox();
     for args in [
         vec!["scan", "--timeout", "1"],
@@ -390,16 +400,16 @@ fn bluetooth_subcommands_fail_cleanly_where_there_is_no_adapter() {
         vec!["raw", "read", "network_type", "--timeout", "1"],
     ] {
         let run = gr3sync(home.path(), &args);
-        assert_ne!(run.status, 0, "{args:?} unexpectedly succeeded");
-        assert!(
-            !run.stderr.contains("panicked"),
-            "{args:?} panicked: {}",
-            run.stderr
+        let context = format!(
+            "{args:?} -> status {} stdout {:?} stderr {:?}",
+            run.status, run.stdout, run.stderr
         );
+
+        assert_ne!(run.status, 0, "unexpectedly succeeded: {context}");
+        assert!(!run.stderr.contains("panicked"), "panicked: {context}");
         assert!(
-            run.stderr.starts_with("gr3sync:"),
-            "{args:?} did not produce a gr3sync error: {}",
-            run.stderr
+            run.stderr.contains("gr3sync:") || run.stderr.contains("Privacy & Security"),
+            "the user was left with nothing actionable: {context}"
         );
     }
 }

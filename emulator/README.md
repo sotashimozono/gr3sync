@@ -119,11 +119,28 @@ characteristic would only surface on the real camera.
 
 ### Status
 
-The Bluetooth layer is exercised by the `e2e-ble` CI job. It is **not** in the
-branch protection required checks yet: it has not been proven stable across
-runner images, and a job that flakes is worse than one that is explicitly
-provisional. Read its result on the pull request; promote it once it has been
-green for a while.
+Measured, not assumed:
+
+- **GitHub-hosted runners cannot run this.** Their kernel (`6.17.0-1020-azure`)
+  ships no Bluetooth modules at all — not `hci_vhci`, not even `bluetooth`.
+  `modprobe` fails with `Module hci_vhci not found`. It is not a permissions
+  problem and no amount of `sudo` fixes it.
+
+So the `e2e-ble` CI job does two things instead:
+
+1. runs the peripheral with `--transport local`, an in-process Bumble
+   controller needing no kernel, no BlueZ and no root. That executes every line
+   of `ble_peripheral.py` — table parsing, service construction, `power_on`,
+   advertising — and **must pass**.
+2. attempts `/dev/vhci`, and reports it unavailable *only after asserting the
+   module really is absent*. A skip whose reason is checked is a skip; one that
+   just passes is a lie.
+
+The full chain therefore needs a self-hosted Linux runner or a developer
+machine. A host with `hci_vhci` available runs it with the commands above.
+
+`e2e-ble` is not in the branch protection required checks. Promote it once it
+has somewhere it can actually run.
 
 The Python here was written against Bumble 0.0.233 and its API use was checked
-against that release's source. Whether it runs is what CI is for.
+against that release's source.

@@ -41,9 +41,12 @@ from bumble.att import (
     ATT_WRITE_NOT_PERMITTED_ERROR,
     ATT_Error,
 )
+from bumble.controller import Controller
 from bumble.device import Device
 from bumble.gatt import Characteristic, CharacteristicValue, Service
 from bumble.hci import Address
+from bumble.host import Host
+from bumble.link import LocalLink
 from bumble.transport import open_transport
 
 # Must match gr3sync::protocol.
@@ -170,7 +173,17 @@ async def main() -> int:
     parser.add_argument(
         "--transport",
         default="vhci",
-        help="Bumble transport. 'vhci' attaches a virtual controller to BlueZ.",
+        help=(
+            "Bumble transport. 'vhci' attaches a virtual controller to BlueZ so the "
+            "real chain is exercised. 'local' runs an in-process controller instead: "
+            "no kernel, no BlueZ, no root — which is the only thing possible on a "
+            "GitHub-hosted runner, whose kernel ships no Bluetooth modules at all."
+        ),
+    )
+    parser.add_argument(
+        "--ready-only",
+        action="store_true",
+        help="Exit as soon as the peripheral is advertising. For a CI smoke check.",
     )
     parser.add_argument("--name", default=EMULATED_SSID, help="advertised device name")
     parser.add_argument("--address", default="F0:F1:F2:F3:F4:F5", help="controller address")
@@ -186,28 +199,46 @@ async def main() -> int:
             ),
         )
 
-    async with await open_transport(args.transport) as (hci_source, hci_sink):
-        device = Device.with_hci(
-            args.name,
-            Address(args.address, Address.RANDOM_DEVICE_ADDRESS),
-            hci_source,
-            hci_sink,
-        )
-        for service in build_services(state):
-            device.add_service(service)
+    address = Address(args.address, Address.RANDOM_DEVICE_ADDRESS)
+    services = build_services(state)
 
-        await device.power_on()
-        await device.start_advertising(auto_restart=True)
-        emit(
-            event="ready",
-            name=args.name,
-            address=args.address,
-            provenance=state.provenance,
-            characteristics=len(state.characteristics),
+    if args.transport == "local":
+        # An in-process controller on a private link. Nothing reaches the
+        # kernel, so this cannot test BlueZ or btleplug — but it does execute
+        # every line of this script, which is the difference between "written"
+        # and "never run".
+        controller = Controller("gr3-emulator", link=LocalLink(), public_address=address)
+        device = Device(
+            name=args.name, address=address, host=Host(controller, controller)
         )
-        # Serve until killed.
-        await asyncio.get_running_loop().create_future()
+        await _serve(device, services, state, args)
+        return 0
+
+    async with await open_transport(args.transport) as (hci_source, hci_sink):
+        device = Device.with_hci(args.name, address, hci_source, hci_sink)
+        await _serve(device, services, state, args)
     return 0
+
+
+async def _serve(device: Device, services, state: CameraState, args) -> None:
+    for service in services:
+        device.add_service(service)
+
+    await device.power_on()
+    await device.start_advertising(auto_restart=True)
+    emit(
+        event="ready",
+        name=args.name,
+        address=args.address,
+        transport=args.transport,
+        provenance=state.provenance,
+        characteristics=len(state.characteristics),
+        services=len(services),
+    )
+    if args.ready_only:
+        return
+    # Serve until killed.
+    await asyncio.get_running_loop().create_future()
 
 
 if __name__ == "__main__":

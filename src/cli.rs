@@ -251,6 +251,24 @@ fn secs(value: f64) -> Duration {
     Duration::from_secs_f64(value.max(0.0))
 }
 
+/// Warn about macOS's Bluetooth permission gate *before* touching CoreBluetooth.
+///
+/// macOS terminates a process that uses Bluetooth without permission, and the
+/// termination produces no output of its own: the user sees a silent non-zero
+/// exit with nothing to act on. There is no error to catch afterwards, so the
+/// only place the hint can go is in front of the call. Observed on a CI runner,
+/// where `gr3sync scan` died with an empty stderr.
+#[cfg(target_os = "macos")]
+fn bluetooth_permission_hint() {
+    eprintln!(
+        "note: macOS gates Bluetooth per application. If this exits with no further \n\
+         message, allow it under System Settings > Privacy & Security > Bluetooth."
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+fn bluetooth_permission_hint() {}
+
 // ---------------------------------------------------------------------------
 // Reporting
 // ---------------------------------------------------------------------------
@@ -412,6 +430,9 @@ fn cmd_pull(cli: &Cli, args: &PullArgs) -> Result<ExitCode> {
         options.power_off = false;
     }
 
+    if options.use_ble {
+        bluetooth_permission_hint();
+    }
     if !cli.json {
         println!("gr3sync -> {}", options.dest.display());
     }
@@ -443,6 +464,7 @@ fn cmd_pull(cli: &Cli, args: &PullArgs) -> Result<ExitCode> {
 }
 
 fn cmd_scan(cli: &Cli, args: &ScanArgs) -> Result<ExitCode> {
+    bluetooth_permission_hint();
     let found = runtime()?.block_on(ble::scan(secs(args.ble.timeout), args.all))?;
     if cli.json {
         print_json(&serde_json::to_value(&found).unwrap_or(serde_json::Value::Null));
@@ -473,6 +495,7 @@ fn with_session<T>(
     ble_args: &BleArgs,
     body: impl AsyncFnOnce(&ble::Session<ble::BtleplugGatt>) -> Result<T>,
 ) -> Result<T> {
+    bluetooth_permission_hint();
     let config = Config::load()?;
     let address = ble_args.address.clone().or(config.address);
     let timeout = secs(ble_args.timeout);

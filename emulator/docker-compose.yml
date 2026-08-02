@@ -31,3 +31,6 @@ networks:
     ipam:
       config:
         - subnet: 192.168.0.0/24
+          # Docker gives .1 to the bridge itself unless told otherwise, and the
+          # container then cannot bind the camera's real address.
+          gateway: 192.168.0.254
