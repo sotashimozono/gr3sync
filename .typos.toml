@@ -5,6 +5,10 @@
 extend-exclude = ["Cargo.lock"]
 
 [default.extend-words]
+# Bumble spells its permission flag this way (`Characteristic.WRITEABLE`).
+# It is their API surface, not our prose, so it cannot be "fixed".
+WRITEABLE = "WRITEABLE"
+
 # Project and protocol nouns that are not misspellings.
 DNG = "DNG"      # Adobe's raw format, the GR III's raw extension
 nd = "nd"        # "Grad ND", the camera's graduated neutral-density filter
