@@ -86,6 +86,23 @@ async fn adapter() -> Result<btleplug::platform::Adapter> {
 /// With `all_devices` the name filter is dropped, which is the escape hatch for
 /// a camera renamed away from the factory `GR_XXXXXX`.
 pub async fn scan(timeout: Duration, all_devices: bool) -> Result<Vec<DiscoveredCamera>> {
+    Ok(discover(timeout, all_devices)
+        .await?
+        .into_iter()
+        .map(|(camera, _)| camera)
+        .collect())
+}
+
+/// One scan, keeping the `Peripheral` beside each result.
+///
+/// btleplug can only hand back a peripheral the adapter has seen, so anything
+/// that wants to connect needs the object this scan produced — not just the
+/// address. Discarding it and scanning again costs a second full scan window
+/// for a device that has already been found.
+async fn discover(
+    timeout: Duration,
+    all_devices: bool,
+) -> Result<Vec<(DiscoveredCamera, Peripheral)>> {
     let adapter = adapter().await?;
     adapter
         .start_scan(ScanFilter::default())
@@ -110,11 +127,14 @@ pub async fn scan(timeout: Duration, all_devices: bool) -> Result<Vec<Discovered
         if !all_devices && !is_camera_name(name.as_deref()) {
             continue;
         }
-        found.push(DiscoveredCamera {
-            address: properties.address.to_string(),
-            name,
-            rssi: properties.rssi,
-        });
+        found.push((
+            DiscoveredCamera {
+                address: properties.address.to_string(),
+                name,
+                rssi: properties.rssi,
+            },
+            peripheral,
+        ));
     }
     Ok(found)
 }
@@ -132,14 +152,47 @@ pub fn is_camera_name(name: Option<&str>) -> bool {
 /// An explicit address still goes through a scan, because btleplug can only
 /// hand back a `Peripheral` the adapter has actually seen.
 pub async fn find_one(address: Option<&str>, timeout: Duration) -> Result<DiscoveredCamera> {
-    let candidates = scan(timeout, address.is_some()).await?;
-    if let Some(wanted) = address {
-        return candidates
-            .into_iter()
-            .find(|c| c.address.eq_ignore_ascii_case(wanted))
-            .ok_or(Error::CameraNotFound);
-    }
-    pick_one(candidates)
+    let found = discover(timeout, address.is_some()).await?;
+    Ok(select_one(found, address)?.0)
+}
+
+/// Scan once, pick the camera, and connect to it.
+///
+/// The single entry point for "I want a session": scanning and connecting used
+/// to be two calls, and each ran its own scan, so every Bluetooth subcommand
+/// paid for two full scan windows to reach one device.
+pub async fn find_and_connect(
+    address: Option<&str>,
+    timeout: Duration,
+) -> Result<(DiscoveredCamera, BtleplugGatt)> {
+    let found = discover(timeout, address.is_some()).await?;
+    let (camera, peripheral) = select_one(found, address)?;
+    let gatt = BtleplugGatt::attach(peripheral, &camera.address).await?;
+    Ok((camera, gatt))
+}
+
+/// Apply [`pick_one`]'s rule to scan results that carry something alongside.
+///
+/// Generic over the companion so the selection can be exercised without a
+/// radio, and so the ambiguity rule stays defined in exactly one place.
+fn select_one<T>(
+    mut found: Vec<(DiscoveredCamera, T)>,
+    address: Option<&str>,
+) -> Result<(DiscoveredCamera, T)> {
+    let index = match address {
+        Some(wanted) => found
+            .iter()
+            .position(|(c, _)| c.address.eq_ignore_ascii_case(wanted))
+            .ok_or(Error::CameraNotFound)?,
+        None => {
+            let chosen = pick_one(found.iter().map(|(c, _)| c.clone()).collect())?;
+            found
+                .iter()
+                .position(|(c, _)| c.address == chosen.address)
+                .expect("pick_one returns one of its candidates")
+        }
+    };
+    Ok(found.swap_remove(index))
 }
 
 /// Split out from [`find_one`] so the ambiguity rule is testable without a radio.
@@ -166,37 +219,21 @@ pub struct BtleplugGatt {
     characteristics: BTreeMap<Uuid, btleplug::api::Characteristic>,
 }
 
+/// How many times to try the initial GATT connect.
+///
+/// A real GR IIIx refused roughly one connect in three, always on the first
+/// attempt after a previous session had disconnected and always fine when
+/// tried again — see the project's issue #29. One shot is not enough, and the
+/// path that puts the camera back after a sync only gets one chance.
+const CONNECT_ATTEMPTS: u32 = 3;
+const CONNECT_BACKOFF: Duration = Duration::from_secs(2);
+
 impl BtleplugGatt {
-    /// Connect and discover services. The returned value owns the connection
-    /// until [`BtleplugGatt::disconnect`] is called.
-    pub async fn connect(address: &str, timeout: Duration) -> Result<Self> {
-        let adapter = adapter().await?;
-        adapter
-            .start_scan(ScanFilter::default())
-            .await
-            .map_err(|e| Error::BluetoothUnavailable(format!("starting a scan: {e}")))?;
-        tokio::time::sleep(timeout.min(Duration::from_secs(10))).await;
-        let peripherals = adapter
-            .peripherals()
-            .await
-            .map_err(|e| Error::Ble(format!("listing peripherals: {e}")))?;
-        let _ = adapter.stop_scan().await;
-
-        let mut target = None;
-        for peripheral in peripherals {
-            if let Ok(Some(properties)) = peripheral.properties().await {
-                if properties.address.to_string().eq_ignore_ascii_case(address) {
-                    target = Some(peripheral);
-                    break;
-                }
-            }
-        }
-        let peripheral = target.ok_or(Error::CameraNotFound)?;
-
-        peripheral
-            .connect()
-            .await
-            .map_err(|e| Error::Ble(format!("could not connect to {address}: {e}")))?;
+    /// Connect to a peripheral a scan has already produced, and discover its
+    /// services. The returned value owns the connection until
+    /// [`BtleplugGatt::disconnect`] is called.
+    pub async fn attach(peripheral: Peripheral, address: &str) -> Result<Self> {
+        connect_with_retry(&peripheral, address).await?;
         peripheral
             .discover_services()
             .await
@@ -224,6 +261,28 @@ impl BtleplugGatt {
             .get(&uuid)
             .ok_or(Error::MissingCharacteristic(uuid))
     }
+}
+
+/// Connect, retrying a refusal that clears itself.
+///
+/// The observed failure is `Not connected` on the first attempt after an
+/// earlier session, which suggests the host still considers the previous link
+/// open. So each retry disconnects first, then waits a little longer.
+async fn connect_with_retry(peripheral: &Peripheral, address: &str) -> Result<()> {
+    let mut last = String::new();
+    for attempt in 0..CONNECT_ATTEMPTS {
+        if attempt > 0 {
+            let _ = peripheral.disconnect().await;
+            tokio::time::sleep(CONNECT_BACKOFF * attempt).await;
+        }
+        match peripheral.connect().await {
+            Ok(()) => return Ok(()),
+            Err(err) => last = err.to_string(),
+        }
+    }
+    Err(Error::Ble(format!(
+        "could not connect to {address} after {CONNECT_ATTEMPTS} attempts: {last}"
+    )))
 }
 
 impl Gatt for BtleplugGatt {
@@ -492,6 +551,48 @@ mod tests {
     #[test]
     fn no_camera_says_what_to_check() {
         let err = pick_one(Vec::new()).unwrap_err();
+        assert!(err.to_string().contains("On anytime"), "{err}");
+    }
+
+    fn found(addresses: &[&str]) -> Vec<(DiscoveredCamera, &'static str)> {
+        addresses
+            .iter()
+            .map(|address| {
+                (
+                    DiscoveredCamera {
+                        address: (*address).into(),
+                        name: Some(format!("GR_{address}")),
+                        rssi: None,
+                    },
+                    "the peripheral this scan produced",
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn selecting_keeps_what_the_scan_found_beside_the_camera() {
+        // The whole point of the single scan: the peripheral that came back
+        // with the chosen camera has to survive the choice, or connecting
+        // means scanning all over again.
+        let (camera, peripheral) = select_one(found(&["AA"]), None).unwrap();
+        assert_eq!(camera.address, "AA");
+        assert_eq!(peripheral, "the peripheral this scan produced");
+    }
+
+    #[test]
+    fn selecting_by_address_is_case_insensitive_and_picks_the_right_pair() {
+        let (camera, _) = select_one(found(&["AA", "BB"]), Some("bb")).unwrap();
+        assert_eq!(camera.address, "BB");
+    }
+
+    #[test]
+    fn selecting_defers_to_the_same_ambiguity_rule() {
+        // Not a second copy of the rule: both errors must come from pick_one.
+        let err = select_one(found(&["AA", "BB"]), None).unwrap_err();
+        assert!(err.to_string().contains("--address"), "{err}");
+
+        let err = select_one(found(&["AA"]), Some("ZZ")).unwrap_err();
         assert!(err.to_string().contains("On anytime"), "{err}");
     }
 

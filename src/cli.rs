@@ -500,8 +500,7 @@ fn with_session<T>(
     let address = ble_args.address.clone().or(config.address);
     let timeout = secs(ble_args.timeout);
     runtime()?.block_on(async move {
-        let target = ble::find_one(address.as_deref(), timeout).await?;
-        let gatt = ble::BtleplugGatt::connect(&target.address, timeout).await?;
+        let (_camera, gatt) = ble::find_and_connect(address.as_deref(), timeout).await?;
         let session = ble::Session::new(gatt);
         let result = body(&session).await;
         session.gatt().disconnect().await;
