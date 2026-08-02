@@ -5,12 +5,15 @@
 //! back, does the camera's access point get torn down, and does an interrupted
 //! run leave the machine somewhere sane.
 
+#![cfg(feature = "emulator")]
+
 mod common;
 
 use std::path::Path;
 use std::time::Duration;
 
-use common::{CardState, FakeCamera, StubBackend};
+use common::{camera_with, camera_with_three_pairs, StubBackend};
+use gr3sync::emulator::{Card, HttpCamera};
 use gr3sync::state::Ledger;
 use gr3sync::sync::{self, BleHandoff, Options, Outcome};
 
@@ -24,7 +27,7 @@ fn handoff() -> BleHandoff {
     }
 }
 
-fn options(server: &FakeCamera, dest: &Path) -> Options {
+fn options(server: &HttpCamera, dest: &Path) -> Options {
     Options {
         dest: dest.to_path_buf(),
         use_ble: false,
@@ -49,7 +52,7 @@ fn options(server: &FakeCamera, dest: &Path) -> Options {
 }
 
 fn pull(
-    server: &FakeCamera,
+    server: &HttpCamera,
     backend: &StubBackend,
     options: &Options,
     with_handoff: bool,
@@ -64,9 +67,9 @@ fn pull(
     (outcome.expect("sync failed"), events)
 }
 
-fn setup() -> (FakeCamera, tempfile::TempDir, StubBackend) {
+fn setup() -> (HttpCamera, tempfile::TempDir, StubBackend) {
     (
-        FakeCamera::start(CardState::with_three_pairs()),
+        camera_with_three_pairs(),
         tempfile::tempdir().unwrap(),
         StubBackend::on("Home Fibre"),
     )
@@ -195,7 +198,7 @@ fn the_host_network_is_restored_even_when_the_camera_never_answers() {
     // The join succeeds, then the camera is not there — the failure mode of a
     // camera that dropped its access point between BLE and Wi-Fi. Leaving the
     // host associated with a dead AP would strand it with no route anywhere.
-    let server = FakeCamera::start(CardState::with_three_pairs());
+    let server = camera_with_three_pairs();
     let dir = tempfile::tempdir().unwrap();
     let backend = StubBackend::on("Home Fibre");
     let mut options = options(&server, dir.path());
@@ -223,10 +226,10 @@ fn the_host_network_is_restored_even_when_the_camera_never_answers() {
 fn a_file_that_fails_to_download_does_not_fail_the_whole_phase() {
     // Per-file failures belong in `outcome.failed`; only a failure that stops
     // the sync from happening at all is an Err.
-    let mut state = CardState::new();
-    state.add("100RICOH", "R0000001.JPG", b"ok".repeat(512));
-    state.broken.push("R0000001.JPG".into());
-    let server = FakeCamera::start(state);
+    let mut card = Card::new();
+    card.add("100RICOH", "R0000001.JPG", b"ok".repeat(512));
+    card.broken.push("R0000001.JPG".into());
+    let server = camera_with(card);
     let dir = tempfile::tempdir().unwrap();
     let backend = StubBackend::on("Home Fibre");
 
@@ -252,7 +255,7 @@ fn no_ble_never_touches_the_host_network_or_the_camera_ap() {
 
 #[test]
 fn already_on_the_camera_ap_means_no_rejoin() {
-    let server = FakeCamera::start(CardState::with_three_pairs());
+    let server = camera_with_three_pairs();
     let dir = tempfile::tempdir().unwrap();
     let backend = StubBackend::on("GR_4CF5C6");
     pull(&server, &backend, &options(&server, dir.path()), true);
@@ -274,13 +277,13 @@ fn already_on_the_camera_ap_means_no_rejoin() {
 
 #[test]
 fn one_bad_file_does_not_abort_the_rest() {
-    let mut state = CardState::new();
-    state.add("100RICOH", "R0000001.JPG", b"ok".repeat(512));
-    state.add("100RICOH", "R0000002.JPG", b"bad".repeat(512));
-    state.add("100RICOH", "R0000003.JPG", b"ok".repeat(512));
-    state.broken.push("R0000002.JPG".into());
+    let mut card = Card::new();
+    card.add("100RICOH", "R0000001.JPG", b"ok".repeat(512));
+    card.add("100RICOH", "R0000002.JPG", b"bad".repeat(512));
+    card.add("100RICOH", "R0000003.JPG", b"ok".repeat(512));
+    card.broken.push("R0000002.JPG".into());
 
-    let server = FakeCamera::start(state);
+    let server = camera_with(card);
     let dir = tempfile::tempdir().unwrap();
     let backend = StubBackend::on("Home Fibre");
     let (outcome, _) = pull(&server, &backend, &options(&server, dir.path()), false);
@@ -297,12 +300,12 @@ fn one_bad_file_does_not_abort_the_rest() {
 
 #[test]
 fn the_ledger_survives_an_interrupted_run_and_only_the_failure_is_retried() {
-    let mut state = CardState::new();
-    state.add("100RICOH", "R0000001.JPG", b"ok".repeat(512));
-    state.add("100RICOH", "R0000002.JPG", b"bad".repeat(512));
-    state.broken.push("R0000002.JPG".into());
+    let mut card = Card::new();
+    card.add("100RICOH", "R0000001.JPG", b"ok".repeat(512));
+    card.add("100RICOH", "R0000002.JPG", b"bad".repeat(512));
+    card.broken.push("R0000002.JPG".into());
 
-    let server = FakeCamera::start(state);
+    let server = camera_with(card);
     let dir = tempfile::tempdir().unwrap();
     let backend = StubBackend::on("Home Fibre");
     let options = options(&server, dir.path());
@@ -310,7 +313,7 @@ fn the_ledger_survives_an_interrupted_run_and_only_the_failure_is_retried() {
     pull(&server, &backend, &options, false);
     assert!(Ledger::load(dir.path()).contains("100RICOH/R0000001.JPG"));
 
-    server.state.lock().unwrap().broken.clear();
+    server.card.lock().unwrap().broken.clear();
     let (second, _) = pull(&server, &backend, &options, false);
     assert_eq!(second.downloaded, vec!["100RICOH/R0000002.JPG"]);
 }

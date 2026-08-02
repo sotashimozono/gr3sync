@@ -12,6 +12,11 @@
 //! | [`state`] | what has already been downloaded |
 //! | [`sync`] | the orchestration, and the teardown that makes it safe |
 //!
+//! Behind the `emulator` feature there is also a stand-in camera used by the
+//! tests and by the container image. It never ships in the release binary, and
+//! a green test against it proves less than it looks like — see
+//! `emulator::gatt`.
+//!
 //! Nothing here is officially documented by RICOH; see the README for
 //! provenance and for what remains unverified against real hardware.
 
@@ -19,6 +24,8 @@ pub mod ble;
 pub mod camera;
 pub mod cli;
 pub mod config;
+#[cfg(feature = "emulator")]
+pub mod emulator;
 pub mod error;
 pub mod netlink;
 pub mod protocol;
