@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e '.[ble,dev]'
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest
+
+  # The core must stay installable and usable with no third-party packages at
+  # all, so that it can be dropped onto whatever machine is near the camera.
+  # Without this job that property would rot silently.
+  no-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install .
+      - name: Nothing third-party may have come along
+        run: python -c "import bleak" && { echo 'bleak was installed by a bare install'; exit 1; } || true
+      - run: gr3sync --help
+      - run: gr3sync backends
+      - run: gr3sync config show
+      - name: Bluetooth commands must fail with an actionable message, not a traceback
+        run: |
+          set +e
+          output=$(gr3sync scan 2>&1)
+          status=$?
+          echo "$output"
+          [ "$status" -eq 2 ] || { echo "expected exit 2, got $status"; exit 1; }
+          case "$output" in *"gr3sync[ble]"*) ;; *) echo "message did not say how to fix it"; exit 1 ;; esac
