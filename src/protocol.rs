@@ -208,19 +208,27 @@ impl BatteryLevel {
 }
 
 pub fn decode_battery_level(raw: &[u8]) -> Result<BatteryLevel> {
-    if raw.len() < 2 {
+    let Some(&level) = raw.first() else {
         return Err(Error::BadCharacteristicValue {
             uuid: CHAR_BATTERY_LEVEL,
-            got: raw.len(),
-            want: "2",
+            got: 0,
+            want: "1 or 2",
         });
-    }
+    };
     Ok(BatteryLevel {
-        level: raw[0] as i8,
-        // An unrecognised power source is not worth failing a sync over; the
-        // conservative reading is "running on battery", which only ever makes
-        // the battery floor stricter.
-        source: PowerSource::from_i8(raw[1] as i8).unwrap_or(PowerSource::Battery),
+        level: level as i8,
+        // A GR IIIx on firmware 1.41 returns the level and nothing else, so
+        // demanding the power-source byte the field list describes made every
+        // read fail — and took `min_battery` down with it, because a battery
+        // read that errors is treated as non-fatal.
+        //
+        // A missing or unrecognised source is not worth failing a sync over
+        // either; the conservative reading is "running on battery", which only
+        // ever makes the battery floor stricter.
+        source: raw
+            .get(1)
+            .and_then(|byte| PowerSource::from_i8(*byte as i8).ok())
+            .unwrap_or(PowerSource::Battery),
     })
 }
 
@@ -259,13 +267,19 @@ pub struct StorageSlot {
     pub remaining_pictures: i32,
     pub remaining_video_seconds: i32,
     pub file_type: u8,
-    pub writable: bool,
 }
 
-/// Layout after the leading element count, per the reverse-engineered spec:
-/// type, existence, locked, available, formatted (5 × sint8), remaining
-/// pictures, remaining video seconds (2 × sint32), file type, active (2 × sint8).
-const STORAGE_SLOT_SIZE: usize = 5 + 4 + 4 + 2;
+/// Layout after the leading element count: type, existence, locked, available,
+/// formatted (5 × sint8), remaining pictures, remaining video seconds
+/// (2 × sint32), file type (sint8).
+///
+/// The reverse-engineered field list ends with a further "active" sint8, which
+/// a GR IIIx on firmware 1.41 does not send. Its 29-byte payload only divides
+/// as `1 + 2 × 14`, and at 14 every field of both slots lands on a sensible
+/// value; at 15 the second slot runs off the end and is dropped by the
+/// truncation guard below — which is how the card itself went missing while
+/// the unavailable internal memory was reported in its place.
+const STORAGE_SLOT_SIZE: usize = 5 + 4 + 4 + 1;
 
 /// Decode `Storage Information` into per-slot records.
 ///
@@ -293,7 +307,6 @@ pub fn decode_storage_information(raw: &[u8]) -> Vec<StorageSlot> {
                 chunk[9], chunk[10], chunk[11], chunk[12],
             ]),
             file_type: chunk[13],
-            writable: chunk[14] != 0,
         });
         offset += STORAGE_SLOT_SIZE;
     }
@@ -415,8 +428,18 @@ mod tests {
     }
 
     #[test]
-    fn battery_level_needs_two_bytes() {
-        assert!(decode_battery_level(&[0x50]).is_err());
+    fn battery_level_survives_a_camera_that_omits_the_power_source() {
+        // Observed on a GR IIIx, firmware 1.41: `875fc41d-…` returns `64` and
+        // nothing else. Requiring two bytes made this a read error, and a
+        // battery read error takes `min_battery` with it.
+        let one_byte = decode_battery_level(&[0x64]).unwrap();
+        assert_eq!(one_byte.level, 100);
+        assert!(!one_byte.on_ac(), "an absent source must read as battery");
+    }
+
+    #[test]
+    fn battery_level_needs_at_least_one_byte() {
+        assert!(decode_battery_level(&[]).is_err());
     }
 
     #[test]
@@ -439,20 +462,41 @@ mod tests {
     }
 
     #[test]
-    fn storage_information_decodes_one_slot() {
-        let mut payload = vec![1u8, 1, 1, 0, 1, 1];
-        payload.extend_from_slice(&1234i32.to_le_bytes());
-        payload.extend_from_slice(&600i32.to_le_bytes());
-        payload.extend_from_slice(&[0, 1]);
+    fn storage_information_decodes_what_a_real_camera_sent() {
+        // Verbatim from a GR IIIx, firmware 1.41, with a card in the slot:
+        //
+        //   count  02
+        //   slot 0 00 01 00 00 01 | 00000000 | 00000000 | 02
+        //   slot 1 01 01 00 01 01 | 2d080000 | a24e0000 | 02
+        //
+        // 29 bytes, which only divides as 1 + 2 × 14.
+        let payload = [
+            0x02, //
+            0x00, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x02, //
+            0x01, 0x01, 0x00, 0x01, 0x01, 0x2d, 0x08, 0x00, 0x00, 0xa2, 0x4e, 0x00, 0x00, 0x02,
+        ];
 
         let slots = decode_storage_information(&payload);
-        assert_eq!(slots.len(), 1);
-        let slot = slots[0];
-        assert_eq!(slot.kind, StorageType::SdSlot1);
-        assert!(slot.present && slot.available && slot.formatted && slot.writable);
-        assert!(!slot.locked);
-        assert_eq!(slot.remaining_pictures, 1234);
-        assert_eq!(slot.remaining_video_seconds, 600);
+        assert_eq!(
+            slots.len(),
+            2,
+            "the card is the second slot; do not drop it"
+        );
+
+        // Internal memory: there, formatted, and not the one being written to.
+        assert_eq!(slots[0].kind, StorageType::Internal);
+        assert!(slots[0].present && slots[0].formatted);
+        assert!(!slots[0].available && !slots[0].locked);
+        assert_eq!(slots[0].remaining_pictures, 0);
+
+        // The card.
+        assert_eq!(slots[1].kind, StorageType::SdSlot1);
+        assert!(slots[1].present && slots[1].available && slots[1].formatted);
+        assert!(!slots[1].locked);
+        assert_eq!(slots[1].remaining_pictures, 2093);
+        assert_eq!(slots[1].remaining_video_seconds, 20130);
+        assert_eq!(slots[1].file_type, 2);
     }
 
     #[test]
