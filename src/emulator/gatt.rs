@@ -486,10 +486,21 @@ mod tests {
         let table: GattTable = serde_json::from_str(text).expect("captured table parses");
 
         assert!(table.provenance.is_hardware());
-        assert_eq!(table.characteristics.len(), p::KNOWN_CHARACTERISTICS.len());
 
-        // The permissions the camera itself reported. gr3sync writes to these
-        // three and to nothing else; see `ble.rs`.
+        // Every characteristic the specification documents was exposed by the
+        // camera, so the capture should carry all of them. A short table means
+        // the recording was taken with an older, narrower `doctor`.
+        assert_eq!(table.characteristics.len(), p::KNOWN_CHARACTERISTICS.len());
+        for characteristic in p::KNOWN_CHARACTERISTICS {
+            assert!(
+                table.get(characteristic.uuid).is_some(),
+                "{} is missing from the capture",
+                characteristic.name
+            );
+        }
+
+        // The permissions the camera itself reported. gr3sync writes to the
+        // first three and to nothing else; see `ble.rs`.
         for uuid in [
             p::CHAR_CAMERA_POWER,
             p::CHAR_NETWORK_TYPE,

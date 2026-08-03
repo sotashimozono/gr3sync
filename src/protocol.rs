@@ -23,6 +23,8 @@ pub const SERVICE_BLUETOOTH_INFORMATION: Uuid = uuid!("6fe9d605-3122-4fce-a0ae-f
 pub const SERVICE_CAMERA: Uuid = uuid!("4b445988-caa0-4dd3-941d-37b4f52aca86");
 pub const SERVICE_WLAN_CONTROL: Uuid = uuid!("f37f568f-9071-445d-a938-5441f2e82399");
 pub const SERVICE_BLUETOOTH_CONTROL: Uuid = uuid!("0f291746-0c80-4726-87a7-3c501fd3b4b6");
+pub const SERVICE_SHOOTING_CONTROL: Uuid = uuid!("9f00f387-8345-4bbc-8b92-b87b52e3091a");
+pub const SERVICE_GPS_CONTROL: Uuid = uuid!("84a0dd62-e8aa-4d0f-91db-819b6724c69e");
 
 // ---------------------------------------------------------------------------
 // Characteristics
@@ -55,47 +57,287 @@ pub const CHAR_CHANNEL: Uuid = uuid!("51de6ebc-0f22-4357-87e4-b1fa1d385ab8");
 pub const CHAR_BLE_ENABLE_CONDITION: Uuid = uuid!("d8676c92-dc4e-4d9e-acce-b9e251ddcc0c");
 pub const CHAR_PAIRED_DEVICE_NAME: Uuid = uuid!("fe3a32f8-a189-42de-a391-bc81ae4daa76");
 
-/// Every characteristic gr3sync reads or writes. Used by `gr3sync doctor` to
-/// report, in one pass, which of them a real camera actually exposes.
-pub const KNOWN_CHARACTERISTICS: &[(&str, Uuid)] = &[
-    ("model_number", CHAR_MODEL_NUMBER),
-    ("firmware_revision", CHAR_FIRMWARE_REVISION),
-    ("serial_number", CHAR_SERIAL_NUMBER),
-    ("bluetooth_device_name", CHAR_BLUETOOTH_DEVICE_NAME),
-    ("camera_power", CHAR_CAMERA_POWER),
-    ("operation_mode", CHAR_OPERATION_MODE),
-    ("battery_level", CHAR_BATTERY_LEVEL),
-    ("storage_information", CHAR_STORAGE_INFORMATION),
-    ("file_transfer_list", CHAR_FILE_TRANSFER_LIST),
-    ("ble_enable_condition", CHAR_BLE_ENABLE_CONDITION),
-    ("network_type", CHAR_NETWORK_TYPE),
-    ("ssid", CHAR_SSID),
-    ("passphrase", CHAR_PASSPHRASE),
-    ("channel", CHAR_CHANNEL),
+/// One entry in the camera's documented GATT profile.
+///
+/// Name, UUID and owning service in one place. They used to be two structures —
+/// a name/UUID list and a `match` returning the service — which could drift
+/// apart silently; now a characteristic cannot exist without its service.
+pub struct Characteristic {
+    pub name: &'static str,
+    pub uuid: Uuid,
+    /// A GATT client reaches a characteristic through its service, so anything
+    /// that rebuilds the camera's table — the emulator, `doctor`'s report —
+    /// needs this and cannot recover it from the characteristic UUID alone.
+    pub service: Uuid,
+}
+
+const fn c(name: &'static str, uuid: Uuid, service: Uuid) -> Characteristic {
+    Characteristic {
+        name,
+        uuid,
+        service,
+    }
+}
+
+/// Every characteristic the reverse-engineered specification documents, which
+/// is every one a real GR IIIx exposes bar the standard Bluetooth SIG entries
+/// (`0000xxxx-0000-1000-8000-00805f9b34fb`: GAP, GATT, Device Information).
+///
+/// `gr3sync doctor` reads the lot in one pass and reports which of them a
+/// camera actually has. Being in this table means "we know what it is", not
+/// "gr3sync uses it": most of these are shooting parameters gr3sync never
+/// touches, and the set it is allowed to *write* is pinned separately in
+/// `ble.rs`.
+pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
+    // Camera Information
+    c(
+        "model_number",
+        CHAR_MODEL_NUMBER,
+        SERVICE_CAMERA_INFORMATION,
+    ),
+    c(
+        "firmware_revision",
+        CHAR_FIRMWARE_REVISION,
+        SERVICE_CAMERA_INFORMATION,
+    ),
+    c(
+        "serial_number",
+        CHAR_SERIAL_NUMBER,
+        SERVICE_CAMERA_INFORMATION,
+    ),
+    c(
+        "manufacturer_name",
+        uuid!("f5666a48-6a74-40ae-a817-3c9b3efb59a6"),
+        SERVICE_CAMERA_INFORMATION,
+    ),
+    // Bluetooth Information
+    c(
+        "bluetooth_device_name",
+        CHAR_BLUETOOTH_DEVICE_NAME,
+        SERVICE_BLUETOOTH_INFORMATION,
+    ),
+    // Camera
+    c("camera_power", CHAR_CAMERA_POWER, SERVICE_CAMERA),
+    c("operation_mode", CHAR_OPERATION_MODE, SERVICE_CAMERA),
+    c(
+        "operation_mode_list",
+        uuid!("430b80a3-cc2e-4ec2-aacd-08610281ff38"),
+        SERVICE_CAMERA,
+    ),
+    c("battery_level", CHAR_BATTERY_LEVEL, SERVICE_CAMERA),
+    c(
+        "storage_information",
+        CHAR_STORAGE_INFORMATION,
+        SERVICE_CAMERA,
+    ),
+    c(
+        "file_transfer_list",
+        CHAR_FILE_TRANSFER_LIST,
+        SERVICE_CAMERA,
+    ),
+    c(
+        "power_off_during_file_transfer",
+        CHAR_POWER_OFF_DURING_TRANSFER,
+        SERVICE_CAMERA,
+    ),
+    c(
+        "camera_service_notification",
+        CHAR_CAMERA_SERVICE_NOTIFICATION,
+        SERVICE_CAMERA,
+    ),
+    c(
+        "date_time",
+        uuid!("fa46bbdd-8a8f-4796-8cf3-aa58949b130a"),
+        SERVICE_CAMERA,
+    ),
+    c(
+        "geo_tag",
+        uuid!("a36afdcf-6b67-4046-9be7-28fb67dbc071"),
+        SERVICE_CAMERA,
+    ),
+    // WLAN Control Command
+    c("network_type", CHAR_NETWORK_TYPE, SERVICE_WLAN_CONTROL),
+    c("ssid", CHAR_SSID, SERVICE_WLAN_CONTROL),
+    c("passphrase", CHAR_PASSPHRASE, SERVICE_WLAN_CONTROL),
+    c("channel", CHAR_CHANNEL, SERVICE_WLAN_CONTROL),
+    // Bluetooth Control Command
+    c(
+        "ble_enable_condition",
+        CHAR_BLE_ENABLE_CONDITION,
+        SERVICE_BLUETOOTH_CONTROL,
+    ),
+    c(
+        "paired_device_name",
+        CHAR_PAIRED_DEVICE_NAME,
+        SERVICE_BLUETOOTH_CONTROL,
+    ),
+    // GPS Control Command
+    c(
+        "gps_information",
+        uuid!("28f59d60-8b8e-4fcd-a81f-61bdb46595a9"),
+        SERVICE_GPS_CONTROL,
+    ),
+    // Shooting Control Command. gr3sync reads none of these during a sync;
+    // they are here so `doctor` can name what it finds, and so `raw read
+    // shutter_speed` works without anyone looking up a UUID.
+    c(
+        "operation_request",
+        uuid!("559644b8-e0bc-4011-929b-5cf9199851e7"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "capture_status",
+        uuid!("b5589c08-b5fd-46f5-be7d-ab1b8c074caa"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "capture_mode",
+        uuid!("78009238-ac3d-4370-9b6f-c9ce2f4e3ca8"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "shot_count",
+        uuid!("12d262ba-d8bf-44b0-8e85-c414a40230a9"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "self_timer",
+        uuid!("009a8e70-b306-4451-b943-7f54392eb971"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "auto_focus_status",
+        uuid!("cdfc734e-ea21-427d-a69f-c1a0f7f1e9a3"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "focus_mode",
+        uuid!("89458f80-50a1-42c1-b031-1bc6082179c0"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "focus_setting_list",
+        uuid!("31b28dab-bd3c-4c27-aa08-f379bf737c1e"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "shooting_mode",
+        uuid!("a3c51525-de3e-4777-a1c2-699e28736fcf"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "shooting_mode_list",
+        uuid!("f662dcd8-ac6e-4e02-a4b2-ce92cd44c7c3"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "drive_mode",
+        uuid!("b29e6de3-1aec-48c1-9d05-02cea57ce664"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "drive_mode_list",
+        uuid!("f4b6c78c-7873-43f0-9748-f4406185224d"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "metering_mode",
+        uuid!("ed58217e-1839-43b2-bcd7-dc48c36ac0de"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "shutter_speed",
+        uuid!("d3ce2aed-10fa-4648-833d-cd74c6f35905"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "shutter_speed_list",
+        uuid!("b355330d-4adc-4434-a222-7b91404b4788"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "aperture",
+        uuid!("3911f22d-9771-479d-b2b9-f729d9baf9dc"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "aperture_list",
+        uuid!("4866f4a9-2c83-457b-b393-b9535e1447e5"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "iso_sensitivity",
+        uuid!("206bd02c-78b2-42c4-820a-cf30e0963909"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "iso_sensitivity_list",
+        uuid!("9c83df56-fd93-4639-8ca7-857bb7b3ca3d"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "exposure_compensation",
+        uuid!("30bcc8eb-725d-4048-a832-e76ae26a57e9"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "exposure_compensation_list",
+        uuid!("01879798-28ee-4d97-92c9-fd249c88bbcc"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "white_balance",
+        uuid!("2361f4ff-2c7e-4fc5-876b-f9b0efbc06fd"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "white_balance_list",
+        uuid!("fb673486-2a76-41b8-88f7-f88552fe5745"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "file_type",
+        uuid!("95bfa8ca-4680-424d-b27c-aac20d86e48b"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "file_type_list",
+        uuid!("f3bfb222-c62b-4aaa-bb61-ef6486626cc8"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "jpeg_size",
+        uuid!("9838bb04-4abb-4c12-ae22-626d02e3704b"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "movie_configuration",
+        uuid!("404f6626-1294-407f-ab3d-ddc6b805b6bc"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "shooting_service_notification",
+        uuid!("671466a5-5535-412e-ac4f-8b2f06af2237"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
+    c(
+        "high_frequency_shooting_service_notification",
+        uuid!("2ac97991-a78b-4cd4-9ae8-6e030e1d9edb"),
+        SERVICE_SHOOTING_CONTROL,
+    ),
 ];
 
-/// Which service each known characteristic belongs to.
-///
-/// A GATT client finds characteristics through their service, so anything that
-/// reconstructs the camera's table — the emulator, `doctor`'s report — needs
-/// this mapping and cannot recover it from the characteristic UUID alone.
+/// Look up a documented characteristic by name.
+pub fn characteristic_named(name: &str) -> Option<&'static Characteristic> {
+    KNOWN_CHARACTERISTICS.iter().find(|c| c.name == name)
+}
+
+/// Which service a known characteristic belongs to.
 pub fn service_of(characteristic: Uuid) -> Option<Uuid> {
-    Some(match characteristic {
-        CHAR_MODEL_NUMBER | CHAR_FIRMWARE_REVISION | CHAR_SERIAL_NUMBER => {
-            SERVICE_CAMERA_INFORMATION
-        }
-        CHAR_BLUETOOTH_DEVICE_NAME => SERVICE_BLUETOOTH_INFORMATION,
-        CHAR_CAMERA_POWER
-        | CHAR_OPERATION_MODE
-        | CHAR_BATTERY_LEVEL
-        | CHAR_STORAGE_INFORMATION
-        | CHAR_FILE_TRANSFER_LIST
-        | CHAR_POWER_OFF_DURING_TRANSFER
-        | CHAR_CAMERA_SERVICE_NOTIFICATION => SERVICE_CAMERA,
-        CHAR_NETWORK_TYPE | CHAR_SSID | CHAR_PASSPHRASE | CHAR_CHANNEL => SERVICE_WLAN_CONTROL,
-        CHAR_BLE_ENABLE_CONDITION | CHAR_PAIRED_DEVICE_NAME => SERVICE_BLUETOOTH_CONTROL,
-        _ => return None,
-    })
+    KNOWN_CHARACTERISTICS
+        .iter()
+        .find(|c| c.uuid == characteristic)
+        .map(|c| c.service)
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +560,7 @@ mod tests {
     use super::*;
 
     fn all_characteristics() -> Vec<Uuid> {
-        KNOWN_CHARACTERISTICS.iter().map(|(_, u)| *u).collect()
+        KNOWN_CHARACTERISTICS.iter().map(|c| c.uuid).collect()
     }
 
     #[test]
@@ -331,6 +573,17 @@ mod tests {
     }
 
     #[test]
+    fn characteristic_names_are_unique() {
+        // Two entries under one name would make `raw read <name>` resolve to
+        // whichever came first, which is not a thing anyone should debug.
+        let mut names: Vec<&str> = KNOWN_CHARACTERISTICS.iter().map(|c| c.name).collect();
+        let before = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(before, names.len(), "duplicated characteristic names");
+    }
+
+    #[test]
     fn services_are_distinct_from_characteristics() {
         let services = [
             SERVICE_CAMERA_INFORMATION,
@@ -338,6 +591,8 @@ mod tests {
             SERVICE_CAMERA,
             SERVICE_WLAN_CONTROL,
             SERVICE_BLUETOOTH_CONTROL,
+            SERVICE_SHOOTING_CONTROL,
+            SERVICE_GPS_CONTROL,
         ];
         for service in services {
             assert!(
@@ -348,12 +603,39 @@ mod tests {
     }
 
     #[test]
-    fn every_known_characteristic_belongs_to_a_service() {
-        // A characteristic with no service cannot be reconstructed by the
-        // emulator, and would silently go missing from its GATT table.
-        for (name, uuid) in KNOWN_CHARACTERISTICS {
-            assert!(service_of(*uuid).is_some(), "{name} has no service");
+    fn every_characteristic_names_a_service_we_declare() {
+        // Holding the service beside the UUID makes "has a service" trivially
+        // true, so the useful question is whether it is one of ours: a typo in
+        // a service UUID would otherwise reach the emulator's GATT table and
+        // put the characteristic somewhere no client would look for it.
+        let services = [
+            SERVICE_CAMERA_INFORMATION,
+            SERVICE_BLUETOOTH_INFORMATION,
+            SERVICE_CAMERA,
+            SERVICE_WLAN_CONTROL,
+            SERVICE_BLUETOOTH_CONTROL,
+            SERVICE_SHOOTING_CONTROL,
+            SERVICE_GPS_CONTROL,
+        ];
+        for characteristic in KNOWN_CHARACTERISTICS {
+            assert!(
+                services.contains(&characteristic.service),
+                "{} points at an undeclared service {}",
+                characteristic.name,
+                characteristic.service
+            );
+            assert_eq!(
+                service_of(characteristic.uuid),
+                Some(characteristic.service)
+            );
         }
+    }
+
+    #[test]
+    fn a_characteristic_resolves_by_name() {
+        let found = characteristic_named("operation_request").expect("known");
+        assert_eq!(found.service, SERVICE_SHOOTING_CONTROL);
+        assert!(characteristic_named("no_such_thing").is_none());
     }
 
     #[test]
