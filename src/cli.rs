@@ -42,6 +42,14 @@ struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
 
+    /// Use a camera profile from a file instead of the built-in one.
+    ///
+    /// For a model or firmware this binary was not built against. Start from
+    /// `gr3sync profile` and edit it; `doctor` reports what the camera
+    /// actually exposes.
+    #[arg(long, global = true, value_name = "PATH")]
+    profile: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -65,6 +73,8 @@ enum Command {
     List(ListArgs),
     /// Download named files over Wi-Fi, e.g. 100RICOH/R0001234.JPG.
     Get(GetArgs),
+    /// Print the built-in camera profile, as a starting point for a new one.
+    Profile,
     /// Show the config file and its resolved values.
     Config,
     /// Show which Wi-Fi control backends work on this host.
@@ -226,6 +236,17 @@ pub fn main() -> ExitCode {
 }
 
 fn dispatch(cli: &Cli) -> Result<ExitCode> {
+    // Before anything else looks at the characteristic table. Loading it late
+    // would give one run two different ideas about the camera.
+    if let Some(path) = &cli.profile {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| Error::io(format!("reading the profile {path}"), e))?;
+        let described = p::load_profile(&text)?;
+        if cli.verbose {
+            eprintln!("gr3sync: using the profile for {described}");
+        }
+    }
+
     match &cli.command {
         Command::Pull(args) => cmd_pull(cli, args),
         Command::Scan(args) => cmd_scan(cli, args),
@@ -235,9 +256,20 @@ fn dispatch(cli: &Cli) -> Result<ExitCode> {
         Command::Raw(args) => cmd_raw(cli, args),
         Command::List(args) => cmd_list(cli, args),
         Command::Get(args) => cmd_get(cli, args),
+        Command::Profile => cmd_profile(),
         Command::Config => cmd_config(cli),
         Command::Backends => cmd_backends(cli),
     }
+}
+
+/// Print the built-in table in profile shape.
+///
+/// Always the built-in one, even when `--profile` replaced it: the point is to
+/// hand someone a working starting point, not to echo back what they gave.
+fn cmd_profile() -> Result<ExitCode> {
+    let profile = p::export_profile("RICOH GR IIIx", Some("1.41"));
+    print_json(&serde_json::to_value(&profile).unwrap_or(serde_json::Value::Null));
+    Ok(ExitCode::SUCCESS)
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime> {
