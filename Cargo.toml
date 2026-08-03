@@ -22,7 +22,9 @@ toml = "1.1"
 # features would only add attack surface and binary size for a camera that
 # serves unauthenticated http:// on 192.168.0.1.
 ureq = { version = "3", default-features = false }
-uuid = "1"
+# `serde` so a camera profile can be data: the characteristic table lives in
+# profiles/*.json rather than in the binary.
+uuid = { version = "1", features = ["serde"] }
 
 [features]
 # The emulator is test/CI scaffolding: it must never be in a shipped binary.

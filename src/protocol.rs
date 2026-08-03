@@ -64,7 +64,8 @@ pub const CHAR_PAIRED_DEVICE_NAME: Uuid = uuid!("fe3a32f8-a189-42de-a391-bc81ae4
 /// have no format at all, and at least one of the rest disagrees with the
 /// camera. Where the two conflict the camera wins; where neither is clear the
 /// value stays [`Encoding::Opaque`] rather than being guessed at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Encoding {
     /// NUL-padded UTF-8 in a fixed-size buffer.
     Utf8,
@@ -84,7 +85,8 @@ pub enum Encoding {
     Opaque,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ListElement {
     Sint8,
     Sint32,
@@ -663,14 +665,120 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
     ),
 ];
 
+// ---------------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------------
+
+/// A camera's characteristic table, as data.
+///
+/// The table above is the one for the body this project is tested against, and
+/// it stays in Rust: it is checked at compile time, and a default that can fail
+/// to parse at startup would be a failure mode invented for no one's benefit.
+///
+/// A profile is for the cameras we do not have. Another model, or a firmware
+/// that moves something, is then a file and `--profile` rather than a release.
+/// `export` writes the built-in table out in the same shape, so a new profile
+/// starts from a working one rather than from nothing.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Profile {
+    pub model: String,
+    #[serde(default)]
+    pub firmware: Option<String>,
+    pub characteristics: Vec<ProfileEntry>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProfileEntry {
+    pub name: String,
+    pub uuid: Uuid,
+    pub service: Uuid,
+    pub encoding: Encoding,
+    #[serde(default)]
+    pub values: Vec<(i64, String)>,
+}
+
+static PROFILE: std::sync::OnceLock<Vec<Characteristic>> = std::sync::OnceLock::new();
+
+/// The characteristics gr3sync knows about: the built-in table, or a profile
+/// loaded in place of it.
+pub fn known_characteristics() -> &'static [Characteristic] {
+    PROFILE
+        .get()
+        .map(|loaded| loaded.as_slice())
+        .unwrap_or(KNOWN_CHARACTERISTICS)
+}
+
+/// Replace the built-in table with one read from a file.
+///
+/// Must happen before anything reads the table: two halves of one run holding
+/// different ideas about the camera is not a state worth supporting. The
+/// strings are leaked deliberately — a profile is loaded once, at startup, and
+/// lives as long as the process.
+pub fn load_profile(text: &str) -> Result<String> {
+    let profile: Profile = serde_json::from_str(text)
+        .map_err(|e| Error::Config(format!("profile is not valid JSON: {e}")))?;
+    if profile.characteristics.is_empty() {
+        return Err(Error::Config("profile lists no characteristics".into()));
+    }
+
+    let entries: Vec<Characteristic> = profile
+        .characteristics
+        .into_iter()
+        .map(|e| Characteristic {
+            name: Box::leak(e.name.into_boxed_str()),
+            uuid: e.uuid,
+            service: e.service,
+            encoding: e.encoding,
+            values: Box::leak(
+                e.values
+                    .into_iter()
+                    .map(|(v, n)| (v, &*Box::leak(n.into_boxed_str())))
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            ),
+        })
+        .collect();
+
+    let described = match &profile.firmware {
+        Some(firmware) => format!("{} firmware {firmware}", profile.model),
+        None => profile.model.clone(),
+    };
+    PROFILE
+        .set(entries)
+        .map_err(|_| Error::Config("a profile was already loaded".into()))?;
+    Ok(described)
+}
+
+/// The built-in table in profile shape, as a starting point for a new one.
+pub fn export_profile(model: &str, firmware: Option<&str>) -> Profile {
+    Profile {
+        model: model.to_string(),
+        firmware: firmware.map(String::from),
+        characteristics: KNOWN_CHARACTERISTICS
+            .iter()
+            .map(|c| ProfileEntry {
+                name: c.name.to_string(),
+                uuid: c.uuid,
+                service: c.service,
+                encoding: c.encoding,
+                values: c
+                    .values
+                    .iter()
+                    .map(|(v, n)| (*v, (*n).to_string()))
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 /// Look up a documented characteristic by name.
 pub fn characteristic_named(name: &str) -> Option<&'static Characteristic> {
-    KNOWN_CHARACTERISTICS.iter().find(|c| c.name == name)
+    known_characteristics().iter().find(|c| c.name == name)
 }
 
 /// Which service a known characteristic belongs to.
 pub fn service_of(characteristic: Uuid) -> Option<Uuid> {
-    KNOWN_CHARACTERISTICS
+    known_characteristics()
         .iter()
         .find(|c| c.uuid == characteristic)
         .map(|c| c.service)
@@ -1082,6 +1190,98 @@ mod tests {
             .expect("known")
             .meaning(39)
             .is_none());
+    }
+
+    #[test]
+    fn the_sync_path_can_find_everything_it_names() {
+        // This is what externalising the table costs, and what buys it back.
+        //
+        // `wlan on` is written around `Network Type` existing; `pull` reads
+        // `Battery Level` to decide whether to start. Those constants are
+        // compiled in, but the table they are looked up in no longer has to be.
+        // So the invariant worth pinning is not "the constant exists" — the
+        // compiler already says that — but "the table contains it".
+        let table = export_profile("RICOH GR IIIx", Some("1.41"));
+        for (name, uuid) in [
+            ("camera_power", CHAR_CAMERA_POWER),
+            ("operation_mode", CHAR_OPERATION_MODE),
+            ("battery_level", CHAR_BATTERY_LEVEL),
+            ("storage_information", CHAR_STORAGE_INFORMATION),
+            ("network_type", CHAR_NETWORK_TYPE),
+            ("ssid", CHAR_SSID),
+            ("passphrase", CHAR_PASSPHRASE),
+            ("model_number", CHAR_MODEL_NUMBER),
+            ("file_transfer_list", CHAR_FILE_TRANSFER_LIST),
+            ("ble_enable_condition", CHAR_BLE_ENABLE_CONDITION),
+        ] {
+            let found = table
+                .characteristics
+                .iter()
+                .find(|e| e.uuid == uuid)
+                .unwrap_or_else(|| panic!("{name} is missing from the profile"));
+            assert_eq!(found.name, name, "{uuid} is filed under the wrong name");
+        }
+    }
+
+    #[test]
+    fn a_profile_round_trips() {
+        let exported = export_profile("Test Camera", Some("9.99"));
+        let text = serde_json::to_string(&exported).expect("serialises");
+        let back: Profile = serde_json::from_str(&text).expect("parses");
+
+        assert_eq!(back.model, "Test Camera");
+        assert_eq!(back.firmware.as_deref(), Some("9.99"));
+        assert_eq!(back.characteristics.len(), KNOWN_CHARACTERISTICS.len());
+
+        // Encodings and value tables have to survive the trip, or a profile
+        // would silently lose the part that makes a reading legible.
+        let file_type = back
+            .characteristics
+            .iter()
+            .find(|e| e.name == "file_type")
+            .expect("file_type");
+        assert_eq!(file_type.encoding, Encoding::Uint8);
+        assert!(file_type.values.iter().any(|(v, n)| *v == 2 && n == "DNG"));
+
+        let iso_list = back
+            .characteristics
+            .iter()
+            .find(|e| e.name == "iso_sensitivity_list")
+            .expect("iso_sensitivity_list");
+        assert_eq!(iso_list.encoding, Encoding::List(ListElement::Sint32));
+    }
+
+    #[test]
+    fn the_shipped_profile_matches_the_built_in_table() {
+        // `profiles/gr-iiix-1.41.json` is what someone copies to start a new
+        // profile. If it drifts from the table it was exported from, it stops
+        // being a working starting point without anything saying so.
+        let shipped: Profile = serde_json::from_str(include_str!("../profiles/gr-iiix-1.41.json"))
+            .expect("the shipped profile parses");
+        let built_in = export_profile("RICOH GR IIIx", Some("1.41"));
+
+        assert_eq!(shipped.model, built_in.model);
+        assert_eq!(
+            shipped.characteristics.len(),
+            built_in.characteristics.len()
+        );
+        for (a, b) in shipped
+            .characteristics
+            .iter()
+            .zip(&built_in.characteristics)
+        {
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.uuid, b.uuid);
+            assert_eq!(a.service, b.service);
+            assert_eq!(a.encoding, b.encoding);
+            assert_eq!(a.values, b.values, "{} value table drifted", a.name);
+        }
+    }
+
+    #[test]
+    fn a_profile_that_says_nothing_is_rejected() {
+        assert!(load_profile("not json").is_err());
+        assert!(load_profile(r#"{"model":"x","characteristics":[]}"#).is_err());
     }
 
     #[test]
