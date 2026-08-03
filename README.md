@@ -191,7 +191,19 @@ keep_dirs   = true                  # dest/100RICOH/x.JPG vs dest/x.JPG
 - **The camera's Wi-Fi is AP mode only.** There is no station mode in which the
   camera joins your network. The sync host therefore loses its normal network
   for the duration of the transfer unless it has a second adapter. That is a
-  camera limitation, not something gr3sync can route around.
+  camera limitation, not something gr3sync can route around — checked from both
+  ends on a GR IIIx: RICOH documents a `Client mode` on the *same* service and
+  characteristic UUID for the THETA line, and writing it here is **accepted and
+  then silently discarded** (it reads back as `0`); and none of the 26 endpoints
+  in the `/v1/` API configures a network to join. `PUT /v1/params/device` sets
+  the camera's *own* SSID, key and channel.
+- **The access point lasts about a minute.** If nothing joins it, the camera
+  turns it back off by itself — `Network Type` reads `0` again from a later
+  session. Whatever is going to associate has to be ready before the AP goes up,
+  not after.
+- **A write that succeeds is not a setting that took.** The same camera accepts
+  `Network Type = 2` at the GATT layer and discards it. Anything that writes
+  without reading back is trusting a report the camera does not honour.
 - **Bluetooth pairing is effectively one partner.** See "Camera setup".
 - **`--last N` on a large card still lists the whole card first.** `/v1/photos`
   has no pagination.
@@ -248,15 +260,31 @@ Working and raw bytes are in [#9](https://github.com/sotashimozono/gr3sync/issue
 [#10](https://github.com/sotashimozono/gr3sync/issues/10) and
 [#23](https://github.com/sotashimozono/gr3sync/issues/23):
 
-- **the camera accepts `Network Type = 1` from us and raises its access point.**
-  This is the claim the whole project rests on. `wlan on` returned `ApMode`, the
-  AP was seen broadcasting WPA2-Personal from a passive scan, and `wlan off`
-  brought it down again. It is also where one body is least sufficient: an
-  Android project measured the same write **rejected with `0x80`** on a GR III
-  running 1.92 and 2.10, so either the firmware or the model decides, and which
-  one is still open;
+- **the camera accepts `Network Type = 1` from us and raises its access point —
+  with the body switched off.** This is the claim the whole project rests on. A
+  phone found `GR_F323D3` in its Wi-Fi list, joined it, and reached
+  `/v1/photos`. It is also where one body is least sufficient: an Android
+  project measured the same write **rejected with `0x80`** on a GR III running
+  1.92 and 2.10, so either the firmware or the model decides, and which one is
+  still open;
+- **the camera drops that access point again after roughly a minute if nothing
+  joins it.** Read back from a later session, `Network Type` is `0` — the camera
+  gave up. This is the tightest timing constraint in the design, and nothing
+  about it is configurable from our side;
 - the camera answers BLE while switched off and keeps advertising, so
   `Enable Condition = On anytime` does what the specification says;
+- **the HTTP envelope is what gr3sync assumed.** `/v1/photos` really answers
+  `{"errCode":200,"errMsg":"OK","dirs":[{"name":"100RICOH","files":[…]}]}`,
+  spelling included. That half was reverse-engineered from what another client
+  consumes rather than from this camera, and it holds up — which is more than
+  the BLE byte layouts managed;
+- **a single file is 22 MB.** The test for a body larger than 10 MB — the
+  default cap in `ureq`'s buffered read — was written as a precaution. It is
+  not one: every download would fail without it. This body shoots DNG only, so
+  there is no smaller JPEG to fall back on;
+- **the shutter can be fired over BLE alone**, with no Wi-Fi at any point.
+  gr3sync does not do this and may never; see
+  [#13](https://github.com/sotashimozono/gr3sync/issues/13);
 - every one of the 14 documented characteristics is exposed, plus 48 that
   gr3sync does not know about, and the camera's own write permissions match
   what gr3sync assumed — `emulator/gatt-captured.json` is that recording;
@@ -268,16 +296,15 @@ Working and raw bytes are in [#9](https://github.com/sotashimozono/gr3sync/issue
 
 **Not verified — still needs a camera in the room:**
 
-- **the Wi-Fi half against a real camera.** Nothing has been downloaded off a
-  real card. The HTTP client is exercised only against the emulator;
-- how long the camera takes to bring the AP up, and how long from joining until
-  `/v1/ping` answers. The 3 s settle and 45 s join timeout remain estimates.
-  Measuring them needs a host with a second network path — joining the camera's
-  AP on a single-adapter machine cuts the network the run is being driven from;
-- whether `Camera Power` reports the body's power state. A successful
-  `Camera Power = Off` write is followed by reads of `On` from every later
-  session. If a session can never observe `Off`, then `woke_it` is never true
-  and `power_off` silently never fires;
+- **gr3sync has never downloaded a file off a real card.** The endpoints have
+  been reached from a phone and answer correctly; what has not been exercised is
+  gr3sync's own client against them, nor the teardown that has to give the host
+  its network back afterwards;
+- the two timing numbers. The 3 s settle and 45 s join timeout are still
+  estimates, and the second one now looks tight rather than generous — see the
+  minute the camera gives you above. Measuring them needs a host with a second
+  network path, because joining the camera's AP on a single-adapter machine
+  cuts the network the run is being driven from;
 - everything about `networksetup` on current macOS;
 - `btleplug`'s CoreBluetooth backend against this particular device;
 - the Bluetooth transport chain on Linux — btleplug → BlueZ → kernel →

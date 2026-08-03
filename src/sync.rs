@@ -84,6 +84,18 @@ impl Options {
             wifi_interface: config.wifi_interface.clone(),
             min_battery: config.min_battery,
             scan_timeout: Duration::from_secs(10),
+            // How long to keep trying to reach the camera over Wi-Fi.
+            //
+            // Read this as a deadline the camera sets rather than one we chose.
+            // A GR IIIx turns its access point back off after roughly a minute
+            // if nothing associates — `Network Type` reads `0` again from a
+            // later session. So 45 s is not a generous budget with margin
+            // behind it; it is most of the window, and whatever is going to
+            // join has to be ready before the AP goes up.
+            //
+            // Still a guess. Measuring it needs a host with a second network
+            // path, because joining the camera's AP is precisely what takes the
+            // measuring host off the network.
             ap_timeout: Duration::from_secs(45),
             http_timeout: Duration::from_secs(300),
             wake_settle: Duration::from_millis(1500),
