@@ -1,6 +1,18 @@
 {
   "provenance": "captured_from_hardware",
   "characteristics": {
+    "009a8e70-b306-4451-b943-7f54392eb971": {
+      "name": "self_timer",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "",
+      "writable": true
+    },
+    "01879798-28ee-4d97-92c9-fd249c88bbcc": {
+      "name": "exposure_compensation_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "writable": false
+    },
     "0d2fc4d5-5cb3-4cde-b519-445e599957d8": {
       "name": "serial_number",
       "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
@@ -13,16 +25,82 @@
       "value": "656d756c617465640000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
       "writable": true
     },
+    "12d262ba-d8bf-44b0-8e85-c414a40230a9": {
+      "name": "shot_count",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "0101",
+      "writable": false
+    },
     "1452335a-ec7f-4877-b8ab-0f72e18bb295": {
       "name": "operation_mode",
       "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
       "value": "02",
       "writable": true
     },
+    "206bd02c-78b2-42c4-820a-cf30e0963909": {
+      "name": "iso_sensitivity",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "64000000",
+      "writable": true
+    },
+    "2361f4ff-2c7e-4fc5-876b-f9b0efbc06fd": {
+      "name": "white_balance",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "11",
+      "writable": true
+    },
+    "28f59d60-8b8e-4fcd-a81f-61bdb46595a9": {
+      "name": "gps_information",
+      "service": "84a0dd62-e8aa-4d0f-91db-819b6724c69e",
+      "value": "40efffe00000000040efffe00000000000000000000000000000000000000000",
+      "writable": true
+    },
+    "2ac97991-a78b-4cd4-9ae8-6e030e1d9edb": {
+      "name": "high_frequency_shooting_service_notification",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "writable": false
+    },
+    "30bcc8eb-725d-4048-a832-e76ae26a57e9": {
+      "name": "exposure_compensation",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "00",
+      "writable": true
+    },
+    "31b28dab-bd3c-4c27-aa08-f379bf737c1e": {
+      "name": "focus_setting_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "0a000607020103040509",
+      "writable": false
+    },
     "35fe6272-6aa5-44d9-88e1-f09427f51a71": {
       "name": "model_number",
       "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
       "value": "5249434f482047522049494978",
+      "writable": false
+    },
+    "3911f22d-9771-479d-b2b9-f729d9baf9dc": {
+      "name": "aperture",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "14",
+      "writable": true
+    },
+    "404f6626-1294-407f-ab3d-ddc6b805b6bc": {
+      "name": "movie_configuration",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "01",
+      "writable": true
+    },
+    "430b80a3-cc2e-4ec2-aacd-08610281ff38": {
+      "name": "operation_mode_list",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "020001000000",
+      "writable": false
+    },
+    "4866f4a9-2c83-457b-b393-b9535e1447e5": {
+      "name": "aperture_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "100a0b0c0d0e0f10111213141516171819000000000000000000000000000000000000000000000000",
       "writable": false
     },
     "51de6ebc-0f22-4357-87e4-b1fa1d385ab8": {
@@ -31,11 +109,35 @@
       "value": "06",
       "writable": true
     },
+    "559644b8-e0bc-4011-929b-5cf9199851e7": {
+      "name": "operation_request",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "",
+      "writable": true
+    },
+    "671466a5-5535-412e-ac4f-8b2f06af2237": {
+      "name": "shooting_service_notification",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "writable": false
+    },
+    "78009238-ac3d-4370-9b6f-c9ce2f4e3ca8": {
+      "name": "capture_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "00",
+      "writable": true
+    },
     "875fc41d-4980-434c-a653-fd4a4d4410c4": {
       "name": "battery_level",
       "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
-      "value": "42",
+      "value": "21",
       "writable": false
+    },
+    "89458f80-50a1-42c1-b031-1bc6082179c0": {
+      "name": "focus_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "0006",
+      "writable": true
     },
     "90638e5a-e77d-409d-b550-78f7e1ca5ab4": {
       "name": "ssid",
@@ -49,16 +151,58 @@
       "value": "00",
       "writable": true
     },
+    "95bfa8ca-4680-424d-b27c-aac20d86e48b": {
+      "name": "file_type",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "02",
+      "writable": true
+    },
     "97e34da2-2e1a-405b-b80d-f8f0aa9cc51c": {
       "name": "bluetooth_device_name",
       "service": "6fe9d605-3122-4fce-a0ae-fd9bc08ff879",
       "value": "42303a36353a33413a46353a34383a443700",
       "writable": false
     },
+    "9838bb04-4abb-4c12-ae22-626d02e3704b": {
+      "name": "jpeg_size",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "00",
+      "writable": true
+    },
+    "9c83df56-fd93-4639-8ca7-857bb7b3ca3d": {
+      "name": "iso_sensitivity_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "20640000007d000000a0000000c8000000fa0000004001000090010000f40100008002000020030000e8030000e204000040060000d0070000c4090000800c0000a00f00008813000000190000401f00001027000000320000803e0000204e000000640000007d0000409c000000c8000000fa00008038010000900100000000000000000000000000000000000000000000000000000000000000000000000000",
+      "writable": false
+    },
     "a0c10148-8865-4470-9631-8f36d79a41a5": {
       "name": "storage_information",
       "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
-      "value": "02000100000100000000000000000201010001012d080000a24e000002",
+      "value": "02000100000100000000000000000201010001012c0800009c4e000002",
+      "writable": false
+    },
+    "a36afdcf-6b67-4046-9be7-28fb67dbc071": {
+      "name": "geo_tag",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "00",
+      "writable": true
+    },
+    "a3c51525-de3e-4777-a1c2-699e28736fcf": {
+      "name": "shooting_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "0300",
+      "writable": true
+    },
+    "b29e6de3-1aec-48c1-9d05-02cea57ce664": {
+      "name": "drive_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "00",
+      "writable": true
+    },
+    "b355330d-4adc-4434-a222-7b91404b4788": {
+      "name": "shutter_speed_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "34090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c00000000000000000000",
       "writable": false
     },
     "b4eb8905-7411-40a6-a367-2834c2157ea7": {
@@ -67,10 +211,34 @@
       "value": "312e3431000000000000",
       "writable": false
     },
+    "b5589c08-b5fd-46f5-be7d-ab1b8c074caa": {
+      "name": "capture_status",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "00000000",
+      "writable": false
+    },
     "b58ce84c-0666-4de9-bec8-2d27b27b3211": {
       "name": "camera_power",
       "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
       "value": "01",
+      "writable": true
+    },
+    "bd6725fc-5d16-496a-a48a-f784594c8ecb": {
+      "name": "power_off_during_file_transfer",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "0000",
+      "writable": true
+    },
+    "cdfc734e-ea21-427d-a69f-c1a0f7f1e9a3": {
+      "name": "auto_focus_status",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "0000",
+      "writable": false
+    },
+    "d3ce2aed-10fa-4648-833d-cd74c6f35905": {
+      "name": "shutter_speed",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "27",
       "writable": true
     },
     "d8676c92-dc4e-4d9e-acce-b9e251ddcc0c": {
@@ -84,6 +252,60 @@
       "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
       "value": "0000",
       "writable": false
+    },
+    "ed58217e-1839-43b2-bcd7-dc48c36ac0de": {
+      "name": "metering_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "02",
+      "writable": true
+    },
+    "f3bfb222-c62b-4aaa-bb61-ef6486626cc8": {
+      "name": "file_type_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "030002040000",
+      "writable": false
+    },
+    "f4b6c78c-7873-43f0-9748-f4406185224d": {
+      "name": "drive_mode_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "10000102030a0b0c0d0e0f070809040506",
+      "writable": false
+    },
+    "f5666a48-6a74-40ae-a817-3c9b3efb59a6": {
+      "name": "manufacturer_name",
+      "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
+      "value": "5249434f4820494d4147494e4720434f4d50414e592c204c54442e00",
+      "writable": false
+    },
+    "f662dcd8-ac6e-4e02-a4b2-ce92cd44c7c3": {
+      "name": "shooting_mode_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "0403040605000000",
+      "writable": false
+    },
+    "fa46bbdd-8a8f-4796-8cf3-aa58949b130a": {
+      "name": "date_time",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "ea0708030a262b",
+      "writable": true
+    },
+    "faa0aeaf-1654-4842-a139-f4e1c1e722ac": {
+      "name": "camera_service_notification",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "writable": false
+    },
+    "fb673486-2a76-41b8-88f7-f88552fe5745": {
+      "name": "white_balance_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "value": "1000110102030607080904100a0d12131400",
+      "writable": false
+    },
+    "fe3a32f8-a189-42de-a391-bc81ae4daa76": {
+      "name": "paired_device_name",
+      "service": "0f291746-0c80-4726-87a7-3c501fd3b4b6",
+      "value": "",
+      "writable": true
     }
   }
 }

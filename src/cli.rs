@@ -545,15 +545,35 @@ fn cmd_doctor(cli: &Cli, args: &BleArgs) -> Result<ExitCode> {
     let report = with_session(args, async |session| {
         let present = session.gatt().available();
         let mut rows = Vec::new();
-        for (name, uuid) in p::KNOWN_CHARACTERISTICS {
+        for characteristic in p::KNOWN_CHARACTERISTICS {
+            let name = characteristic.name;
+            let uuid = &characteristic.uuid;
             let exposed = present.contains(uuid);
-            let value = if exposed {
+            let properties = session.gatt().properties(*uuid);
+            let value = if !exposed {
+                serde_json::Value::Null
+            } else if !properties.read {
+                // Write-only on this camera — `Operation Request` and friends.
+                // Reading anyway would fill the report with errors that say
+                // nothing about the camera except that we asked wrongly.
+                json!({ "unreadable": true })
+            } else {
                 match session.gatt().read(*uuid).await {
-                    Ok(bytes) => json!({ "hex": hex(&bytes), "text": p::decode_utf8(&bytes) }),
+                    Ok(bytes) => {
+                        let mut value = json!({
+                            "hex": hex(&bytes),
+                            "text": p::decode_utf8(&bytes),
+                        });
+                        // Absent rather than null when we cannot decode it:
+                        // "no field" reads as "we do not claim to know",
+                        // where a null invites being mistaken for a value.
+                        if let Some(decoded) = p::decode_value(characteristic.encoding, &bytes) {
+                            value["decoded"] = json!(decoded);
+                        }
+                        value
+                    }
                     Err(err) => json!({ "error": err.to_string() }),
                 }
-            } else {
-                serde_json::Value::Null
             };
             rows.push(json!({
                 "name": name,
@@ -562,16 +582,16 @@ fn cmd_doctor(cli: &Cli, args: &BleArgs) -> Result<ExitCode> {
                 // permissions. Rebuilt without them, every characteristic
                 // becomes writable and the emulator stops catching a write the
                 // camera would refuse.
-                "properties": session.gatt().properties(*uuid),
+                "properties": properties,
                 // Recorded so `gr3-emulator gatt --from-doctor` can rebuild a
                 // peripheral from this report: a GATT client reaches a
                 // characteristic through its service, not by UUID alone.
-                "service": p::service_of(*uuid).map(|s| s.to_string()),
+                "service": characteristic.service.to_string(),
                 "exposed": exposed,
                 "value": value
             }));
         }
-        let known: Vec<Uuid> = p::KNOWN_CHARACTERISTICS.iter().map(|(_, u)| *u).collect();
+        let known: Vec<Uuid> = p::KNOWN_CHARACTERISTICS.iter().map(|c| c.uuid).collect();
         let unknown: Vec<String> = present
             .iter()
             .filter(|u| !known.contains(u))
@@ -815,18 +835,24 @@ pub fn resolve_characteristic(name_or_uuid: &str) -> Result<Uuid> {
     if let Ok(uuid) = Uuid::parse_str(name_or_uuid) {
         return Ok(uuid);
     }
-    p::KNOWN_CHARACTERISTICS
-        .iter()
-        .find(|(name, _)| *name == name_or_uuid)
-        .map(|(_, uuid)| *uuid)
+    p::characteristic_named(name_or_uuid)
+        .map(|c| c.uuid)
         .ok_or_else(|| {
+            // Fifty-odd names is too many to list at someone who mistyped one,
+            // so offer the near misses and point at `doctor` for the rest.
+            let close: Vec<&str> = p::KNOWN_CHARACTERISTICS
+                .iter()
+                .map(|c| c.name)
+                .filter(|name| name.contains(name_or_uuid))
+                .take(8)
+                .collect();
+            let hint = if close.is_empty() {
+                "run 'gr3sync doctor' to list them".to_string()
+            } else {
+                format!("did you mean: {}", close.join(", "))
+            };
             Error::Config(format!(
-                "{name_or_uuid:?} is neither a UUID nor a known characteristic. Known: {}",
-                p::KNOWN_CHARACTERISTICS
-                    .iter()
-                    .map(|(n, _)| *n)
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                "{name_or_uuid:?} is neither a UUID nor a known characteristic. {hint}"
             ))
         })
 }
@@ -952,8 +978,18 @@ mod tests {
             resolve_characteristic("9111cdd0-9f01-45c4-a2d4-e09e8fb0424d").unwrap(),
             p::CHAR_NETWORK_TYPE
         );
-        let err = resolve_characteristic("nonsense").unwrap_err();
-        assert!(err.to_string().contains("network_type"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_characteristic_name_offers_a_way_forward() {
+        // Fifty-odd names are too many to list at someone who mistyped one, so
+        // a near miss gets candidates and everything else gets pointed at the
+        // command that enumerates them. Neither may be silence.
+        let typo = resolve_characteristic("shutter").unwrap_err().to_string();
+        assert!(typo.contains("shutter_speed"), "{typo}");
+
+        let nothing = resolve_characteristic("nonsense").unwrap_err().to_string();
+        assert!(nothing.contains("doctor"), "{nothing}");
     }
 
     #[test]

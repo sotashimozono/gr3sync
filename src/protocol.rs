@@ -23,6 +23,8 @@ pub const SERVICE_BLUETOOTH_INFORMATION: Uuid = uuid!("6fe9d605-3122-4fce-a0ae-f
 pub const SERVICE_CAMERA: Uuid = uuid!("4b445988-caa0-4dd3-941d-37b4f52aca86");
 pub const SERVICE_WLAN_CONTROL: Uuid = uuid!("f37f568f-9071-445d-a938-5441f2e82399");
 pub const SERVICE_BLUETOOTH_CONTROL: Uuid = uuid!("0f291746-0c80-4726-87a7-3c501fd3b4b6");
+pub const SERVICE_SHOOTING_CONTROL: Uuid = uuid!("9f00f387-8345-4bbc-8b92-b87b52e3091a");
+pub const SERVICE_GPS_CONTROL: Uuid = uuid!("84a0dd62-e8aa-4d0f-91db-819b6724c69e");
 
 // ---------------------------------------------------------------------------
 // Characteristics
@@ -55,47 +57,469 @@ pub const CHAR_CHANNEL: Uuid = uuid!("51de6ebc-0f22-4357-87e4-b1fa1d385ab8");
 pub const CHAR_BLE_ENABLE_CONDITION: Uuid = uuid!("d8676c92-dc4e-4d9e-acce-b9e251ddcc0c");
 pub const CHAR_PAIRED_DEVICE_NAME: Uuid = uuid!("fe3a32f8-a189-42de-a391-bc81ae4daa76");
 
-/// Every characteristic gr3sync reads or writes. Used by `gr3sync doctor` to
-/// report, in one pass, which of them a real camera actually exposes.
-pub const KNOWN_CHARACTERISTICS: &[(&str, Uuid)] = &[
-    ("model_number", CHAR_MODEL_NUMBER),
-    ("firmware_revision", CHAR_FIRMWARE_REVISION),
-    ("serial_number", CHAR_SERIAL_NUMBER),
-    ("bluetooth_device_name", CHAR_BLUETOOTH_DEVICE_NAME),
-    ("camera_power", CHAR_CAMERA_POWER),
-    ("operation_mode", CHAR_OPERATION_MODE),
-    ("battery_level", CHAR_BATTERY_LEVEL),
-    ("storage_information", CHAR_STORAGE_INFORMATION),
-    ("file_transfer_list", CHAR_FILE_TRANSFER_LIST),
-    ("ble_enable_condition", CHAR_BLE_ENABLE_CONDITION),
-    ("network_type", CHAR_NETWORK_TYPE),
-    ("ssid", CHAR_SSID),
-    ("passphrase", CHAR_PASSPHRASE),
-    ("channel", CHAR_CHANNEL),
+/// How a characteristic's bytes are laid out.
+///
+/// Taken from the specification where it says, and from the bytes a real
+/// GR IIIx sent where it does not — 26 of the 53 documented characteristics
+/// have no format at all, and at least one of the rest disagrees with the
+/// camera. Where the two conflict the camera wins; where neither is clear the
+/// value stays [`Encoding::Opaque`] rather than being guessed at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encoding {
+    /// NUL-padded UTF-8 in a fixed-size buffer.
+    Utf8,
+    Sint8,
+    Uint8,
+    /// Little-endian, four bytes.
+    Sint32,
+    /// A leading count, that many elements, then zero padding to a fixed size.
+    ///
+    /// This is how the camera reports the values it will *accept* for a
+    /// setting — the domain, at runtime, from the device itself.
+    List(ListElement),
+    /// Decoded by a dedicated function in this module.
+    Structured,
+    /// Documented as a structure nobody has decoded against real bytes yet.
+    /// Reported as hex and nothing more; inventing fields would be worse.
+    Opaque,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListElement {
+    Sint8,
+    Sint32,
+}
+
+/// A characteristic's value, decoded as far as we honestly can.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(untagged)]
+pub enum Decoded {
+    Text(String),
+    Number(i64),
+    List(Vec<i64>),
+}
+
+/// Decode a `count`-prefixed list.
+///
+/// A count larger than the bytes behind it yields the elements that are
+/// actually there. That is not defensive programming for its own sake: a real
+/// camera sent `focus_setting_list` claiming ten entries with nine bytes
+/// following, and `exposure_compensation_list` claiming none at all.
+pub fn decode_list(raw: &[u8], element: ListElement) -> Vec<i64> {
+    let Some((&count, rest)) = raw.split_first() else {
+        return Vec::new();
+    };
+    let width = match element {
+        ListElement::Sint8 => 1,
+        ListElement::Sint32 => 4,
+    };
+    rest.chunks_exact(width)
+        .take(count as usize)
+        .map(|chunk| match element {
+            ListElement::Sint8 => chunk[0] as i8 as i64,
+            ListElement::Sint32 => {
+                i32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as i64
+            }
+        })
+        .collect()
+}
+
+/// `Date Time`, service 4b445988…, characteristic fa46bbdd….
+///
+/// Seven bytes: year as little-endian u16, then month, day, hour, minute,
+/// second. Verified against a camera whose clock was known to be right.
+pub fn decode_date_time(raw: &[u8]) -> Option<String> {
+    if raw.len() < 7 {
+        return None;
+    }
+    let year = u16::from_le_bytes([raw[0], raw[1]]);
+    Some(format!(
+        "{year:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        raw[2], raw[3], raw[4], raw[5], raw[6]
+    ))
+}
+
+/// Decode a value according to its encoding, or `None` when we cannot.
+pub fn decode_value(encoding: Encoding, raw: &[u8]) -> Option<Decoded> {
+    match encoding {
+        Encoding::Utf8 => Some(Decoded::Text(decode_utf8(raw))),
+        Encoding::Sint8 => raw.first().map(|b| Decoded::Number(*b as i8 as i64)),
+        Encoding::Uint8 => raw.first().map(|b| Decoded::Number(*b as i64)),
+        Encoding::Sint32 => raw
+            .get(..4)
+            .map(|b| Decoded::Number(i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as i64)),
+        Encoding::List(element) => Some(Decoded::List(decode_list(raw, element))),
+        // Structured values have their own accessors with their own types;
+        // squeezing them through one enum would lose more than it gained.
+        Encoding::Structured | Encoding::Opaque => None,
+    }
+}
+
+/// One entry in the camera's documented GATT profile.
+///
+/// Name, UUID and owning service in one place. They used to be two structures —
+/// a name/UUID list and a `match` returning the service — which could drift
+/// apart silently; now a characteristic cannot exist without its service.
+pub struct Characteristic {
+    pub name: &'static str,
+    pub uuid: Uuid,
+    /// A GATT client reaches a characteristic through its service, so anything
+    /// that rebuilds the camera's table — the emulator, `doctor`'s report —
+    /// needs this and cannot recover it from the characteristic UUID alone.
+    pub service: Uuid,
+    pub encoding: Encoding,
+}
+
+const fn c(name: &'static str, uuid: Uuid, service: Uuid, encoding: Encoding) -> Characteristic {
+    Characteristic {
+        name,
+        uuid,
+        service,
+        encoding,
+    }
+}
+
+/// Every characteristic the reverse-engineered specification documents, which
+/// is every one a real GR IIIx exposes bar the standard Bluetooth SIG entries
+/// (`0000xxxx-0000-1000-8000-00805f9b34fb`: GAP, GATT, Device Information).
+///
+/// `gr3sync doctor` reads the lot in one pass and reports which of them a
+/// camera actually has. Being in this table means "we know what it is", not
+/// "gr3sync uses it": most of these are shooting parameters gr3sync never
+/// touches, and the set it is allowed to *write* is pinned separately in
+/// `ble.rs`.
+pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
+    // Camera Information
+    c(
+        "model_number",
+        CHAR_MODEL_NUMBER,
+        SERVICE_CAMERA_INFORMATION,
+        Encoding::Utf8,
+    ),
+    c(
+        "firmware_revision",
+        CHAR_FIRMWARE_REVISION,
+        SERVICE_CAMERA_INFORMATION,
+        Encoding::Utf8,
+    ),
+    c(
+        "serial_number",
+        CHAR_SERIAL_NUMBER,
+        SERVICE_CAMERA_INFORMATION,
+        Encoding::Utf8,
+    ),
+    c(
+        "manufacturer_name",
+        uuid!("f5666a48-6a74-40ae-a817-3c9b3efb59a6"),
+        SERVICE_CAMERA_INFORMATION,
+        Encoding::Utf8,
+    ),
+    // Bluetooth Information
+    c(
+        "bluetooth_device_name",
+        CHAR_BLUETOOTH_DEVICE_NAME,
+        SERVICE_BLUETOOTH_INFORMATION,
+        Encoding::Utf8,
+    ),
+    // Camera
+    c(
+        "camera_power",
+        CHAR_CAMERA_POWER,
+        SERVICE_CAMERA,
+        Encoding::Sint8,
+    ),
+    c(
+        "operation_mode",
+        CHAR_OPERATION_MODE,
+        SERVICE_CAMERA,
+        Encoding::Sint8,
+    ),
+    c(
+        "operation_mode_list",
+        uuid!("430b80a3-cc2e-4ec2-aacd-08610281ff38"),
+        SERVICE_CAMERA,
+        Encoding::List(ListElement::Sint8),
+    ),
+    c(
+        "battery_level",
+        CHAR_BATTERY_LEVEL,
+        SERVICE_CAMERA,
+        Encoding::Structured,
+    ),
+    c(
+        "storage_information",
+        CHAR_STORAGE_INFORMATION,
+        SERVICE_CAMERA,
+        Encoding::Structured,
+    ),
+    c(
+        "file_transfer_list",
+        CHAR_FILE_TRANSFER_LIST,
+        SERVICE_CAMERA,
+        Encoding::Structured,
+    ),
+    // Two bytes on a GR IIIx, and the specification gives no format. Left
+    // undecoded rather than guessed at.
+    c(
+        "power_off_during_file_transfer",
+        CHAR_POWER_OFF_DURING_TRANSFER,
+        SERVICE_CAMERA,
+        Encoding::Opaque,
+    ),
+    c(
+        "camera_service_notification",
+        CHAR_CAMERA_SERVICE_NOTIFICATION,
+        SERVICE_CAMERA,
+        Encoding::Opaque,
+    ),
+    c(
+        "date_time",
+        uuid!("fa46bbdd-8a8f-4796-8cf3-aa58949b130a"),
+        SERVICE_CAMERA,
+        Encoding::Structured,
+    ),
+    c(
+        "geo_tag",
+        uuid!("a36afdcf-6b67-4046-9be7-28fb67dbc071"),
+        SERVICE_CAMERA,
+        Encoding::Sint8,
+    ),
+    // WLAN Control Command
+    c(
+        "network_type",
+        CHAR_NETWORK_TYPE,
+        SERVICE_WLAN_CONTROL,
+        Encoding::Sint8,
+    ),
+    c("ssid", CHAR_SSID, SERVICE_WLAN_CONTROL, Encoding::Utf8),
+    c(
+        "passphrase",
+        CHAR_PASSPHRASE,
+        SERVICE_WLAN_CONTROL,
+        Encoding::Utf8,
+    ),
+    c(
+        "channel",
+        CHAR_CHANNEL,
+        SERVICE_WLAN_CONTROL,
+        Encoding::Sint8,
+    ),
+    // Bluetooth Control Command
+    c(
+        "ble_enable_condition",
+        CHAR_BLE_ENABLE_CONDITION,
+        SERVICE_BLUETOOTH_CONTROL,
+        Encoding::Sint8,
+    ),
+    c(
+        "paired_device_name",
+        CHAR_PAIRED_DEVICE_NAME,
+        SERVICE_BLUETOOTH_CONTROL,
+        Encoding::Utf8,
+    ),
+    // GPS Control Command. Two big-endian doubles and sixteen further bytes;
+    // the camera sent 65535.0 for both coordinates, which is an unset marker
+    // rather than a position, so there is nothing yet to check a decoder
+    // against.
+    c(
+        "gps_information",
+        uuid!("28f59d60-8b8e-4fcd-a81f-61bdb46595a9"),
+        SERVICE_GPS_CONTROL,
+        Encoding::Opaque,
+    ),
+    // Shooting Control Command. gr3sync reads none of these during a sync;
+    // they are here so `doctor` can name what it finds, and so `raw read
+    // shutter_speed` works without anyone looking up a UUID.
+    c(
+        "operation_request",
+        uuid!("559644b8-e0bc-4011-929b-5cf9199851e7"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Opaque,
+    ),
+    c(
+        "capture_status",
+        uuid!("b5589c08-b5fd-46f5-be7d-ab1b8c074caa"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Opaque,
+    ),
+    c(
+        "capture_mode",
+        uuid!("78009238-ac3d-4370-9b6f-c9ce2f4e3ca8"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Sint8,
+    ),
+    c(
+        "shot_count",
+        uuid!("12d262ba-d8bf-44b0-8e85-c414a40230a9"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Opaque,
+    ),
+    c(
+        "self_timer",
+        uuid!("009a8e70-b306-4451-b943-7f54392eb971"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Opaque,
+    ),
+    c(
+        "auto_focus_status",
+        uuid!("cdfc734e-ea21-427d-a69f-c1a0f7f1e9a3"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Opaque,
+    ),
+    // Documented without a format and two bytes on the wire, like
+    // `shooting_mode`. Both stay opaque until someone can watch the camera
+    // while the value changes.
+    c(
+        "focus_mode",
+        uuid!("89458f80-50a1-42c1-b031-1bc6082179c0"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Opaque,
+    ),
+    c(
+        "focus_setting_list",
+        uuid!("31b28dab-bd3c-4c27-aa08-f379bf737c1e"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::List(ListElement::Sint8),
+    ),
+    c(
+        "shooting_mode",
+        uuid!("a3c51525-de3e-4777-a1c2-699e28736fcf"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Opaque,
+    ),
+    c(
+        "shooting_mode_list",
+        uuid!("f662dcd8-ac6e-4e02-a4b2-ce92cd44c7c3"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::List(ListElement::Sint8),
+    ),
+    c(
+        "drive_mode",
+        uuid!("b29e6de3-1aec-48c1-9d05-02cea57ce664"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Uint8,
+    ),
+    c(
+        "drive_mode_list",
+        uuid!("f4b6c78c-7873-43f0-9748-f4406185224d"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::List(ListElement::Sint8),
+    ),
+    c(
+        "metering_mode",
+        uuid!("ed58217e-1839-43b2-bcd7-dc48c36ac0de"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Sint8,
+    ),
+    c(
+        "shutter_speed",
+        uuid!("d3ce2aed-10fa-4648-833d-cd74c6f35905"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Sint8,
+    ),
+    c(
+        "shutter_speed_list",
+        uuid!("b355330d-4adc-4434-a222-7b91404b4788"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::List(ListElement::Sint8),
+    ),
+    c(
+        "aperture",
+        uuid!("3911f22d-9771-479d-b2b9-f729d9baf9dc"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Sint8,
+    ),
+    c(
+        "aperture_list",
+        uuid!("4866f4a9-2c83-457b-b393-b9535e1447e5"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::List(ListElement::Sint8),
+    ),
+    c(
+        "iso_sensitivity",
+        uuid!("206bd02c-78b2-42c4-820a-cf30e0963909"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Sint32,
+    ),
+    c(
+        "iso_sensitivity_list",
+        uuid!("9c83df56-fd93-4639-8ca7-857bb7b3ca3d"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::List(ListElement::Sint32),
+    ),
+    c(
+        "exposure_compensation",
+        uuid!("30bcc8eb-725d-4048-a832-e76ae26a57e9"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Sint8,
+    ),
+    c(
+        "exposure_compensation_list",
+        uuid!("01879798-28ee-4d97-92c9-fd249c88bbcc"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::List(ListElement::Sint8),
+    ),
+    c(
+        "white_balance",
+        uuid!("2361f4ff-2c7e-4fc5-876b-f9b0efbc06fd"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Sint8,
+    ),
+    c(
+        "white_balance_list",
+        uuid!("fb673486-2a76-41b8-88f7-f88552fe5745"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::List(ListElement::Sint8),
+    ),
+    c(
+        "file_type",
+        uuid!("95bfa8ca-4680-424d-b27c-aac20d86e48b"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Uint8,
+    ),
+    c(
+        "file_type_list",
+        uuid!("f3bfb222-c62b-4aaa-bb61-ef6486626cc8"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::List(ListElement::Sint8),
+    ),
+    c(
+        "jpeg_size",
+        uuid!("9838bb04-4abb-4c12-ae22-626d02e3704b"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Sint8,
+    ),
+    c(
+        "movie_configuration",
+        uuid!("404f6626-1294-407f-ab3d-ddc6b805b6bc"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Sint8,
+    ),
+    c(
+        "shooting_service_notification",
+        uuid!("671466a5-5535-412e-ac4f-8b2f06af2237"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Opaque,
+    ),
+    c(
+        "high_frequency_shooting_service_notification",
+        uuid!("2ac97991-a78b-4cd4-9ae8-6e030e1d9edb"),
+        SERVICE_SHOOTING_CONTROL,
+        Encoding::Opaque,
+    ),
 ];
 
-/// Which service each known characteristic belongs to.
-///
-/// A GATT client finds characteristics through their service, so anything that
-/// reconstructs the camera's table — the emulator, `doctor`'s report — needs
-/// this mapping and cannot recover it from the characteristic UUID alone.
+/// Look up a documented characteristic by name.
+pub fn characteristic_named(name: &str) -> Option<&'static Characteristic> {
+    KNOWN_CHARACTERISTICS.iter().find(|c| c.name == name)
+}
+
+/// Which service a known characteristic belongs to.
 pub fn service_of(characteristic: Uuid) -> Option<Uuid> {
-    Some(match characteristic {
-        CHAR_MODEL_NUMBER | CHAR_FIRMWARE_REVISION | CHAR_SERIAL_NUMBER => {
-            SERVICE_CAMERA_INFORMATION
-        }
-        CHAR_BLUETOOTH_DEVICE_NAME => SERVICE_BLUETOOTH_INFORMATION,
-        CHAR_CAMERA_POWER
-        | CHAR_OPERATION_MODE
-        | CHAR_BATTERY_LEVEL
-        | CHAR_STORAGE_INFORMATION
-        | CHAR_FILE_TRANSFER_LIST
-        | CHAR_POWER_OFF_DURING_TRANSFER
-        | CHAR_CAMERA_SERVICE_NOTIFICATION => SERVICE_CAMERA,
-        CHAR_NETWORK_TYPE | CHAR_SSID | CHAR_PASSPHRASE | CHAR_CHANNEL => SERVICE_WLAN_CONTROL,
-        CHAR_BLE_ENABLE_CONDITION | CHAR_PAIRED_DEVICE_NAME => SERVICE_BLUETOOTH_CONTROL,
-        _ => return None,
-    })
+    KNOWN_CHARACTERISTICS
+        .iter()
+        .find(|c| c.uuid == characteristic)
+        .map(|c| c.service)
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +742,7 @@ mod tests {
     use super::*;
 
     fn all_characteristics() -> Vec<Uuid> {
-        KNOWN_CHARACTERISTICS.iter().map(|(_, u)| *u).collect()
+        KNOWN_CHARACTERISTICS.iter().map(|c| c.uuid).collect()
     }
 
     #[test]
@@ -331,6 +755,17 @@ mod tests {
     }
 
     #[test]
+    fn characteristic_names_are_unique() {
+        // Two entries under one name would make `raw read <name>` resolve to
+        // whichever came first, which is not a thing anyone should debug.
+        let mut names: Vec<&str> = KNOWN_CHARACTERISTICS.iter().map(|c| c.name).collect();
+        let before = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(before, names.len(), "duplicated characteristic names");
+    }
+
+    #[test]
     fn services_are_distinct_from_characteristics() {
         let services = [
             SERVICE_CAMERA_INFORMATION,
@@ -338,6 +773,8 @@ mod tests {
             SERVICE_CAMERA,
             SERVICE_WLAN_CONTROL,
             SERVICE_BLUETOOTH_CONTROL,
+            SERVICE_SHOOTING_CONTROL,
+            SERVICE_GPS_CONTROL,
         ];
         for service in services {
             assert!(
@@ -348,12 +785,117 @@ mod tests {
     }
 
     #[test]
-    fn every_known_characteristic_belongs_to_a_service() {
-        // A characteristic with no service cannot be reconstructed by the
-        // emulator, and would silently go missing from its GATT table.
-        for (name, uuid) in KNOWN_CHARACTERISTICS {
-            assert!(service_of(*uuid).is_some(), "{name} has no service");
+    fn every_characteristic_names_a_service_we_declare() {
+        // Holding the service beside the UUID makes "has a service" trivially
+        // true, so the useful question is whether it is one of ours: a typo in
+        // a service UUID would otherwise reach the emulator's GATT table and
+        // put the characteristic somewhere no client would look for it.
+        let services = [
+            SERVICE_CAMERA_INFORMATION,
+            SERVICE_BLUETOOTH_INFORMATION,
+            SERVICE_CAMERA,
+            SERVICE_WLAN_CONTROL,
+            SERVICE_BLUETOOTH_CONTROL,
+            SERVICE_SHOOTING_CONTROL,
+            SERVICE_GPS_CONTROL,
+        ];
+        for characteristic in KNOWN_CHARACTERISTICS {
+            assert!(
+                services.contains(&characteristic.service),
+                "{} points at an undeclared service {}",
+                characteristic.name,
+                characteristic.service
+            );
+            assert_eq!(
+                service_of(characteristic.uuid),
+                Some(characteristic.service)
+            );
         }
+    }
+
+    /// The bytes a real GR IIIx sent, as the fixture every decoder answers to.
+    ///
+    /// The specification has been wrong about a byte layout twice — Battery
+    /// Level and Storage Information — so a decoder that only agrees with the
+    /// documentation has not been checked against anything.
+    /// Read straight out of the JSON rather than through `emulator::GattTable`:
+    /// that module is behind a feature flag, and these decoders are not.
+    fn observed(name: &str) -> Vec<u8> {
+        let table: serde_json::Value =
+            serde_json::from_str(include_str!("../emulator/gatt-captured.json")).expect("capture");
+        let uuid = characteristic_named(name).expect("known").uuid.to_string();
+        let hex = table["characteristics"][&uuid]["value"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{name} is not in the capture"));
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
+            .collect()
+    }
+
+    #[test]
+    fn the_iso_list_decodes_to_the_iso_series() {
+        // 32 sint32 values. If the element width or the count offset were
+        // wrong this would not come out as the numbers written on a dial.
+        let values = decode_value(
+            Encoding::List(ListElement::Sint32),
+            &observed("iso_sensitivity_list"),
+        );
+        let Some(Decoded::List(values)) = values else {
+            panic!("expected a list, got {values:?}")
+        };
+        assert_eq!(values.len(), 32);
+        assert_eq!(&values[..5], &[100, 125, 160, 200, 250]);
+    }
+
+    #[test]
+    fn the_clock_decodes_to_when_the_capture_was_taken() {
+        assert_eq!(
+            decode_date_time(&observed("date_time")).as_deref(),
+            Some("2026-08-03 10:38:43")
+        );
+    }
+
+    #[test]
+    fn a_list_shorter_than_its_own_count_yields_what_is_there() {
+        // Not a hypothetical: this camera claims ten focus settings and sends
+        // nine bytes. Trusting the count would read past the value.
+        let raw = observed("focus_setting_list");
+        assert_eq!(raw[0], 10, "the count the camera claims");
+        assert_eq!(raw.len(), 10, "one byte of count plus nine of payload");
+        assert_eq!(decode_list(&raw, ListElement::Sint8).len(), 9);
+    }
+
+    #[test]
+    fn an_empty_list_is_empty_rather_than_padding() {
+        // `exposure_compensation_list` came back as a count of zero followed
+        // by 49 zero bytes. Those are padding, not forty-nine settings.
+        assert!(
+            decode_list(&observed("exposure_compensation_list"), ListElement::Sint8).is_empty()
+        );
+    }
+
+    #[test]
+    fn scalars_and_strings_decode_from_the_capture() {
+        assert_eq!(
+            decode_value(Encoding::Sint32, &observed("iso_sensitivity")),
+            Some(Decoded::Number(100))
+        );
+        assert_eq!(
+            decode_value(Encoding::Utf8, &observed("model_number")),
+            Some(Decoded::Text("RICOH GR IIIx".into()))
+        );
+        // Structured and opaque values have no single-enum answer, and must
+        // not invent one.
+        assert!(decode_value(Encoding::Structured, &observed("storage_information")).is_none());
+        assert!(decode_value(Encoding::Opaque, &observed("gps_information")).is_none());
+    }
+
+    #[test]
+    fn a_characteristic_resolves_by_name() {
+        let found = characteristic_named("operation_request").expect("known");
+        assert_eq!(found.service, SERVICE_SHOOTING_CONTROL);
+        assert!(characteristic_named("no_such_thing").is_none());
     }
 
     #[test]
