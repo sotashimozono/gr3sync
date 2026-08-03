@@ -568,6 +568,11 @@ fn cmd_doctor(cli: &Cli, args: &BleArgs) -> Result<ExitCode> {
                         // "no field" reads as "we do not claim to know",
                         // where a null invites being mistaken for a value.
                         if let Some(decoded) = p::decode_value(characteristic.encoding, &bytes) {
+                            if let p::Decoded::Number(n) = decoded {
+                                if let Some(meaning) = characteristic.meaning(n) {
+                                    value["meaning"] = json!(meaning);
+                                }
+                            }
                             value["decoded"] = json!(decoded);
                         }
                         value

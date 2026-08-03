@@ -155,6 +155,116 @@ pub fn decode_value(encoding: Encoding, raw: &[u8]) -> Option<Decoded> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Value tables
+// ---------------------------------------------------------------------------
+//
+// What a number means, where the specification says. A table rather than a Rust
+// enum for three reasons the camera itself supplies: `white_balance` documents
+// value 13 three times (Manual, Manual2, Manual3), which no enum can express;
+// `drive_mode` has 66 entries, which no enum should; and a table is data, so it
+// can move out of the binary later without the call sites changing.
+
+pub const DRIVE_MODE_VALUES: &[(i64, &str)] = &[
+    (0, "Single Frame"),
+    (1, "Single Frame (Self 10 s)"),
+    (2, "Single Frame (Self 2 s)"),
+    (3, "Continuous"),
+    (4, "Bracket"),
+    (5, "Bracket (Self 10 s)"),
+    (6, "Bracket (Self 2 s)"),
+    (7, "Multiple Exposure"),
+    (8, "Multiple Exposure (Self 10 s)"),
+    (9, "Multiple Exposure (Self 2 s)"),
+    (10, "Interval"),
+    (11, "Interval (Self 10 s)"),
+    (12, "Interval (Self 2 s)"),
+    (13, "Interval Composite"),
+    (14, "Interval Composite (Self 10 s)"),
+    (15, "Interval Composite (Self 2 s)"),
+    (16, "Single Frame (Remote)"),
+    (17, "Single Frame (Remote 3 s)"),
+];
+
+pub const FILE_TYPE_VALUES: &[(i64, &str)] = &[
+    (0, "JPEG"),
+    (1, "PEF"),
+    (2, "DNG"),
+    (3, "JPEG + PEF"),
+    (4, "JPEG + DNG"),
+];
+
+pub const METERING_MODE_VALUES: &[(i64, &str)] = &[
+    (0, "Spot"),
+    (1, "Center-weighted"),
+    (2, "Evaluative"),
+    (3, "Highlight-weighted"),
+];
+
+pub const WHITE_BALANCE_VALUES: &[(i64, &str)] = &[
+    (0, "Auto"),
+    (1, "Daylight"),
+    (2, "Shade"),
+    (3, "Cloudy"),
+    (4, "Incandescent 1"),
+    (5, "Incandescent 2"),
+    (6, "Fluorescent (daylight)"),
+    (7, "Fluorescent (natural white)"),
+    (8, "Fluorescent (white)"),
+    (9, "Fluorescent (bulb colour)"),
+    (10, "Colour temperature"),
+    (11, "Colour temperature 2"),
+    (12, "Colour temperature 3"),
+    // 13 is documented three times over, as Manual, Manual2 and Manual3. The
+    // first is what a lookup will find; the ambiguity is the specification's.
+    (13, "Manual"),
+    (16, "CTE"),
+    (17, "Multi Pattern Auto"),
+];
+
+pub const CAPTURE_MODE_VALUES: &[(i64, &str)] = &[(0, "Still image"), (2, "Movie")];
+
+pub const JPEG_SIZE_VALUES: &[(i64, &str)] = &[
+    (0, "L / Super Fine"),
+    (1, "M / Super Fine"),
+    (2, "S / Super Fine"),
+    (3, "XS / Super Fine"),
+    (4, "L / Fine"),
+    (5, "M / Fine"),
+    (6, "S / Fine"),
+    (7, "XS / Fine"),
+    (8, "L / Economy"),
+    (9, "M / Economy"),
+    (10, "S / Economy"),
+    (11, "XS / Economy"),
+];
+
+pub const MOVIE_CONFIGURATION_VALUES: &[(i64, &str)] = &[
+    (0, "FullHD 60fps"),
+    (1, "FullHD 30fps"),
+    (2, "FullHD 24fps"),
+    (3, "4K 60fps"),
+    (4, "4K 30fps"),
+    (5, "4K 24fps"),
+];
+
+pub const CAMERA_POWER_VALUES: &[(i64, &str)] = &[(0, "Off"), (1, "On"), (2, "Sleep")];
+
+pub const OPERATION_MODE_VALUES: &[(i64, &str)] = &[
+    (0, "Capture"),
+    (1, "Playback"),
+    (2, "BLE Startup"),
+    (3, "Other"),
+    (4, "Power Off Transfer"),
+];
+
+pub const NETWORK_TYPE_VALUES: &[(i64, &str)] = &[(0, "Off"), (1, "AP mode")];
+
+pub const BLE_ENABLE_CONDITION_VALUES: &[(i64, &str)] =
+    &[(0, "Disable"), (1, "On anytime"), (2, "On when power on")];
+
+pub const NO_VALUES: &[(i64, &str)] = &[];
+
 /// One entry in the camera's documented GATT profile.
 ///
 /// Name, UUID and owning service in one place. They used to be two structures —
@@ -168,14 +278,47 @@ pub struct Characteristic {
     /// needs this and cannot recover it from the characteristic UUID alone.
     pub service: Uuid,
     pub encoding: Encoding,
+    /// What the numbers mean, where the specification says. Empty where it does
+    /// not, which is most of them.
+    pub values: &'static [(i64, &'static str)],
 }
 
+impl Characteristic {
+    /// The documented name for a value, if there is one.
+    pub fn meaning(&self, value: i64) -> Option<&'static str> {
+        self.values
+            .iter()
+            .find(|(candidate, _)| *candidate == value)
+            .map(|(_, name)| *name)
+    }
+}
+
+/// A characteristic whose numbers the specification does not name — most of
+/// them.
 const fn c(name: &'static str, uuid: Uuid, service: Uuid, encoding: Encoding) -> Characteristic {
     Characteristic {
         name,
         uuid,
         service,
         encoding,
+        values: NO_VALUES,
+    }
+}
+
+/// A characteristic with a documented value table.
+const fn cv(
+    name: &'static str,
+    uuid: Uuid,
+    service: Uuid,
+    encoding: Encoding,
+    values: &'static [(i64, &'static str)],
+) -> Characteristic {
+    Characteristic {
+        name,
+        uuid,
+        service,
+        encoding,
+        values,
     }
 }
 
@@ -222,17 +365,19 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
         Encoding::Utf8,
     ),
     // Camera
-    c(
+    cv(
         "camera_power",
         CHAR_CAMERA_POWER,
         SERVICE_CAMERA,
         Encoding::Sint8,
+        CAMERA_POWER_VALUES,
     ),
-    c(
+    cv(
         "operation_mode",
         CHAR_OPERATION_MODE,
         SERVICE_CAMERA,
         Encoding::Sint8,
+        OPERATION_MODE_VALUES,
     ),
     c(
         "operation_mode_list",
@@ -285,11 +430,12 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
         Encoding::Sint8,
     ),
     // WLAN Control Command
-    c(
+    cv(
         "network_type",
         CHAR_NETWORK_TYPE,
         SERVICE_WLAN_CONTROL,
         Encoding::Sint8,
+        NETWORK_TYPE_VALUES,
     ),
     c("ssid", CHAR_SSID, SERVICE_WLAN_CONTROL, Encoding::Utf8),
     c(
@@ -305,11 +451,12 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
         Encoding::Sint8,
     ),
     // Bluetooth Control Command
-    c(
+    cv(
         "ble_enable_condition",
         CHAR_BLE_ENABLE_CONDITION,
         SERVICE_BLUETOOTH_CONTROL,
         Encoding::Sint8,
+        BLE_ENABLE_CONDITION_VALUES,
     ),
     c(
         "paired_device_name",
@@ -342,11 +489,12 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
         SERVICE_SHOOTING_CONTROL,
         Encoding::Opaque,
     ),
-    c(
+    cv(
         "capture_mode",
         uuid!("78009238-ac3d-4370-9b6f-c9ce2f4e3ca8"),
         SERVICE_SHOOTING_CONTROL,
         Encoding::Sint8,
+        CAPTURE_MODE_VALUES,
     ),
     c(
         "shot_count",
@@ -393,11 +541,12 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
         SERVICE_SHOOTING_CONTROL,
         Encoding::List(ListElement::Sint8),
     ),
-    c(
+    cv(
         "drive_mode",
         uuid!("b29e6de3-1aec-48c1-9d05-02cea57ce664"),
         SERVICE_SHOOTING_CONTROL,
         Encoding::Uint8,
+        DRIVE_MODE_VALUES,
     ),
     c(
         "drive_mode_list",
@@ -405,11 +554,12 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
         SERVICE_SHOOTING_CONTROL,
         Encoding::List(ListElement::Sint8),
     ),
-    c(
+    cv(
         "metering_mode",
         uuid!("ed58217e-1839-43b2-bcd7-dc48c36ac0de"),
         SERVICE_SHOOTING_CONTROL,
         Encoding::Sint8,
+        METERING_MODE_VALUES,
     ),
     c(
         "shutter_speed",
@@ -459,11 +609,12 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
         SERVICE_SHOOTING_CONTROL,
         Encoding::List(ListElement::Sint8),
     ),
-    c(
+    cv(
         "white_balance",
         uuid!("2361f4ff-2c7e-4fc5-876b-f9b0efbc06fd"),
         SERVICE_SHOOTING_CONTROL,
         Encoding::Sint8,
+        WHITE_BALANCE_VALUES,
     ),
     c(
         "white_balance_list",
@@ -471,11 +622,12 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
         SERVICE_SHOOTING_CONTROL,
         Encoding::List(ListElement::Sint8),
     ),
-    c(
+    cv(
         "file_type",
         uuid!("95bfa8ca-4680-424d-b27c-aac20d86e48b"),
         SERVICE_SHOOTING_CONTROL,
         Encoding::Uint8,
+        FILE_TYPE_VALUES,
     ),
     c(
         "file_type_list",
@@ -483,17 +635,19 @@ pub const KNOWN_CHARACTERISTICS: &[Characteristic] = &[
         SERVICE_SHOOTING_CONTROL,
         Encoding::List(ListElement::Sint8),
     ),
-    c(
+    cv(
         "jpeg_size",
         uuid!("9838bb04-4abb-4c12-ae22-626d02e3704b"),
         SERVICE_SHOOTING_CONTROL,
         Encoding::Sint8,
+        JPEG_SIZE_VALUES,
     ),
-    c(
+    cv(
         "movie_configuration",
         uuid!("404f6626-1294-407f-ab3d-ddc6b805b6bc"),
         SERVICE_SHOOTING_CONTROL,
         Encoding::Sint8,
+        MOVIE_CONFIGURATION_VALUES,
     ),
     c(
         "shooting_service_notification",
@@ -889,6 +1043,45 @@ mod tests {
         // not invent one.
         assert!(decode_value(Encoding::Structured, &observed("storage_information")).is_none());
         assert!(decode_value(Encoding::Opaque, &observed("gps_information")).is_none());
+    }
+
+    /// Look up what a captured value means, by name.
+    fn meaning_of(name: &str) -> Option<&'static str> {
+        let characteristic = characteristic_named(name).expect("known");
+        match decode_value(characteristic.encoding, &observed(name)) {
+            Some(Decoded::Number(n)) => characteristic.meaning(n),
+            other => panic!("{name} did not decode to a number: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_captured_settings_name_themselves() {
+        // Every one of these is a number the camera sent, resolved through the
+        // specification's table. `file_type` is the one that can be checked
+        // against something outside this repository: the body it came from is
+        // set to shoot DNG, and says so.
+        assert_eq!(meaning_of("file_type"), Some("DNG"));
+        assert_eq!(meaning_of("capture_mode"), Some("Still image"));
+        assert_eq!(meaning_of("metering_mode"), Some("Evaluative"));
+        assert_eq!(meaning_of("white_balance"), Some("Multi Pattern Auto"));
+        assert_eq!(meaning_of("drive_mode"), Some("Single Frame"));
+        assert_eq!(meaning_of("jpeg_size"), Some("L / Super Fine"));
+        assert_eq!(meaning_of("movie_configuration"), Some("FullHD 30fps"));
+        assert_eq!(meaning_of("ble_enable_condition"), Some("On anytime"));
+        assert_eq!(meaning_of("network_type"), Some("Off"));
+    }
+
+    #[test]
+    fn a_value_outside_the_table_has_no_name() {
+        // The camera is free to report something the specification never
+        // mentioned. Saying nothing is the only honest answer.
+        let file_type = characteristic_named("file_type").expect("known");
+        assert!(file_type.meaning(99).is_none());
+        // And most characteristics have no table at all.
+        assert!(characteristic_named("shutter_speed")
+            .expect("known")
+            .meaning(39)
+            .is_none());
     }
 
     #[test]
