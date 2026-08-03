@@ -47,3 +47,15 @@ updates:
     labels:
       - dependencies
       - github-actions
+    groups:
+      # Ungrouped, Dependabot raises one PR per action *path*, and
+      # `github/codeql-action` has three of them: init, autobuild and analyze.
+      # They refuse to run against each other — "Loaded a configuration file
+      # for version X, but running version Y" — so each PR is red on its own
+      # and none of the three can be the one merged first. Grouping is not
+      # tidiness here; it is the only shape in which the bump is mergeable.
+      actions-minor-and-patch:
+        patterns: ["*"]
+        update-types:
+          - minor
+          - patch
