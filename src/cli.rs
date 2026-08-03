@@ -559,7 +559,19 @@ fn cmd_doctor(cli: &Cli, args: &BleArgs) -> Result<ExitCode> {
                 json!({ "unreadable": true })
             } else {
                 match session.gatt().read(*uuid).await {
-                    Ok(bytes) => json!({ "hex": hex(&bytes), "text": p::decode_utf8(&bytes) }),
+                    Ok(bytes) => {
+                        let mut value = json!({
+                            "hex": hex(&bytes),
+                            "text": p::decode_utf8(&bytes),
+                        });
+                        // Absent rather than null when we cannot decode it:
+                        // "no field" reads as "we do not claim to know",
+                        // where a null invites being mistaken for a value.
+                        if let Some(decoded) = p::decode_value(characteristic.encoding, &bytes) {
+                            value["decoded"] = json!(decoded);
+                        }
+                        value
+                    }
                     Err(err) => json!({ "error": err.to_string() }),
                 }
             };
