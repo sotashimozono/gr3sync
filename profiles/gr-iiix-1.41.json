@@ -1,0 +1,698 @@
+{
+  "characteristics": [
+    {
+      "encoding": "utf8",
+      "name": "model_number",
+      "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
+      "uuid": "35fe6272-6aa5-44d9-88e1-f09427f51a71",
+      "values": []
+    },
+    {
+      "encoding": "utf8",
+      "name": "firmware_revision",
+      "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
+      "uuid": "b4eb8905-7411-40a6-a367-2834c2157ea7",
+      "values": []
+    },
+    {
+      "encoding": "utf8",
+      "name": "serial_number",
+      "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
+      "uuid": "0d2fc4d5-5cb3-4cde-b519-445e599957d8",
+      "values": []
+    },
+    {
+      "encoding": "utf8",
+      "name": "manufacturer_name",
+      "service": "9a5ed1c5-74cc-4c50-b5b6-66a48e7ccff1",
+      "uuid": "f5666a48-6a74-40ae-a817-3c9b3efb59a6",
+      "values": []
+    },
+    {
+      "encoding": "utf8",
+      "name": "bluetooth_device_name",
+      "service": "6fe9d605-3122-4fce-a0ae-fd9bc08ff879",
+      "uuid": "97e34da2-2e1a-405b-b80d-f8f0aa9cc51c",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "camera_power",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "b58ce84c-0666-4de9-bec8-2d27b27b3211",
+      "values": [
+        [
+          0,
+          "Off"
+        ],
+        [
+          1,
+          "On"
+        ],
+        [
+          2,
+          "Sleep"
+        ]
+      ]
+    },
+    {
+      "encoding": "sint8",
+      "name": "operation_mode",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "1452335a-ec7f-4877-b8ab-0f72e18bb295",
+      "values": [
+        [
+          0,
+          "Capture"
+        ],
+        [
+          1,
+          "Playback"
+        ],
+        [
+          2,
+          "BLE Startup"
+        ],
+        [
+          3,
+          "Other"
+        ],
+        [
+          4,
+          "Power Off Transfer"
+        ]
+      ]
+    },
+    {
+      "encoding": {
+        "list": "sint8"
+      },
+      "name": "operation_mode_list",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "430b80a3-cc2e-4ec2-aacd-08610281ff38",
+      "values": []
+    },
+    {
+      "encoding": "structured",
+      "name": "battery_level",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "875fc41d-4980-434c-a653-fd4a4d4410c4",
+      "values": []
+    },
+    {
+      "encoding": "structured",
+      "name": "storage_information",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "a0c10148-8865-4470-9631-8f36d79a41a5",
+      "values": []
+    },
+    {
+      "encoding": "structured",
+      "name": "file_transfer_list",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "d9ae1c06-447d-4dea-8b7d-fc8b19c2cdae",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "power_off_during_file_transfer",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "bd6725fc-5d16-496a-a48a-f784594c8ecb",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "camera_service_notification",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "faa0aeaf-1654-4842-a139-f4e1c1e722ac",
+      "values": []
+    },
+    {
+      "encoding": "structured",
+      "name": "date_time",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "fa46bbdd-8a8f-4796-8cf3-aa58949b130a",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "geo_tag",
+      "service": "4b445988-caa0-4dd3-941d-37b4f52aca86",
+      "uuid": "a36afdcf-6b67-4046-9be7-28fb67dbc071",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "network_type",
+      "service": "f37f568f-9071-445d-a938-5441f2e82399",
+      "uuid": "9111cdd0-9f01-45c4-a2d4-e09e8fb0424d",
+      "values": [
+        [
+          0,
+          "Off"
+        ],
+        [
+          1,
+          "AP mode"
+        ]
+      ]
+    },
+    {
+      "encoding": "utf8",
+      "name": "ssid",
+      "service": "f37f568f-9071-445d-a938-5441f2e82399",
+      "uuid": "90638e5a-e77d-409d-b550-78f7e1ca5ab4",
+      "values": []
+    },
+    {
+      "encoding": "utf8",
+      "name": "passphrase",
+      "service": "f37f568f-9071-445d-a938-5441f2e82399",
+      "uuid": "0f38279c-fe9e-461b-8596-81287e8c9a81",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "channel",
+      "service": "f37f568f-9071-445d-a938-5441f2e82399",
+      "uuid": "51de6ebc-0f22-4357-87e4-b1fa1d385ab8",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "ble_enable_condition",
+      "service": "0f291746-0c80-4726-87a7-3c501fd3b4b6",
+      "uuid": "d8676c92-dc4e-4d9e-acce-b9e251ddcc0c",
+      "values": [
+        [
+          0,
+          "Disable"
+        ],
+        [
+          1,
+          "On anytime"
+        ],
+        [
+          2,
+          "On when power on"
+        ]
+      ]
+    },
+    {
+      "encoding": "utf8",
+      "name": "paired_device_name",
+      "service": "0f291746-0c80-4726-87a7-3c501fd3b4b6",
+      "uuid": "fe3a32f8-a189-42de-a391-bc81ae4daa76",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "gps_information",
+      "service": "84a0dd62-e8aa-4d0f-91db-819b6724c69e",
+      "uuid": "28f59d60-8b8e-4fcd-a81f-61bdb46595a9",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "operation_request",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "559644b8-e0bc-4011-929b-5cf9199851e7",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "capture_status",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "b5589c08-b5fd-46f5-be7d-ab1b8c074caa",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "capture_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "78009238-ac3d-4370-9b6f-c9ce2f4e3ca8",
+      "values": [
+        [
+          0,
+          "Still image"
+        ],
+        [
+          2,
+          "Movie"
+        ]
+      ]
+    },
+    {
+      "encoding": "opaque",
+      "name": "shot_count",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "12d262ba-d8bf-44b0-8e85-c414a40230a9",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "self_timer",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "009a8e70-b306-4451-b943-7f54392eb971",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "auto_focus_status",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "cdfc734e-ea21-427d-a69f-c1a0f7f1e9a3",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "focus_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "89458f80-50a1-42c1-b031-1bc6082179c0",
+      "values": []
+    },
+    {
+      "encoding": {
+        "list": "sint8"
+      },
+      "name": "focus_setting_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "31b28dab-bd3c-4c27-aa08-f379bf737c1e",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "shooting_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "a3c51525-de3e-4777-a1c2-699e28736fcf",
+      "values": []
+    },
+    {
+      "encoding": {
+        "list": "sint8"
+      },
+      "name": "shooting_mode_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "f662dcd8-ac6e-4e02-a4b2-ce92cd44c7c3",
+      "values": []
+    },
+    {
+      "encoding": "uint8",
+      "name": "drive_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "b29e6de3-1aec-48c1-9d05-02cea57ce664",
+      "values": [
+        [
+          0,
+          "Single Frame"
+        ],
+        [
+          1,
+          "Single Frame (Self 10 s)"
+        ],
+        [
+          2,
+          "Single Frame (Self 2 s)"
+        ],
+        [
+          3,
+          "Continuous"
+        ],
+        [
+          4,
+          "Bracket"
+        ],
+        [
+          5,
+          "Bracket (Self 10 s)"
+        ],
+        [
+          6,
+          "Bracket (Self 2 s)"
+        ],
+        [
+          7,
+          "Multiple Exposure"
+        ],
+        [
+          8,
+          "Multiple Exposure (Self 10 s)"
+        ],
+        [
+          9,
+          "Multiple Exposure (Self 2 s)"
+        ],
+        [
+          10,
+          "Interval"
+        ],
+        [
+          11,
+          "Interval (Self 10 s)"
+        ],
+        [
+          12,
+          "Interval (Self 2 s)"
+        ],
+        [
+          13,
+          "Interval Composite"
+        ],
+        [
+          14,
+          "Interval Composite (Self 10 s)"
+        ],
+        [
+          15,
+          "Interval Composite (Self 2 s)"
+        ],
+        [
+          16,
+          "Single Frame (Remote)"
+        ],
+        [
+          17,
+          "Single Frame (Remote 3 s)"
+        ]
+      ]
+    },
+    {
+      "encoding": {
+        "list": "sint8"
+      },
+      "name": "drive_mode_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "f4b6c78c-7873-43f0-9748-f4406185224d",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "metering_mode",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "ed58217e-1839-43b2-bcd7-dc48c36ac0de",
+      "values": [
+        [
+          0,
+          "Spot"
+        ],
+        [
+          1,
+          "Center-weighted"
+        ],
+        [
+          2,
+          "Evaluative"
+        ],
+        [
+          3,
+          "Highlight-weighted"
+        ]
+      ]
+    },
+    {
+      "encoding": "sint8",
+      "name": "shutter_speed",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "d3ce2aed-10fa-4648-833d-cd74c6f35905",
+      "values": []
+    },
+    {
+      "encoding": {
+        "list": "sint8"
+      },
+      "name": "shutter_speed_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "b355330d-4adc-4434-a222-7b91404b4788",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "aperture",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "3911f22d-9771-479d-b2b9-f729d9baf9dc",
+      "values": []
+    },
+    {
+      "encoding": {
+        "list": "sint8"
+      },
+      "name": "aperture_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "4866f4a9-2c83-457b-b393-b9535e1447e5",
+      "values": []
+    },
+    {
+      "encoding": "sint32",
+      "name": "iso_sensitivity",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "206bd02c-78b2-42c4-820a-cf30e0963909",
+      "values": []
+    },
+    {
+      "encoding": {
+        "list": "sint32"
+      },
+      "name": "iso_sensitivity_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "9c83df56-fd93-4639-8ca7-857bb7b3ca3d",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "exposure_compensation",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "30bcc8eb-725d-4048-a832-e76ae26a57e9",
+      "values": []
+    },
+    {
+      "encoding": {
+        "list": "sint8"
+      },
+      "name": "exposure_compensation_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "01879798-28ee-4d97-92c9-fd249c88bbcc",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "white_balance",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "2361f4ff-2c7e-4fc5-876b-f9b0efbc06fd",
+      "values": [
+        [
+          0,
+          "Auto"
+        ],
+        [
+          1,
+          "Daylight"
+        ],
+        [
+          2,
+          "Shade"
+        ],
+        [
+          3,
+          "Cloudy"
+        ],
+        [
+          4,
+          "Incandescent 1"
+        ],
+        [
+          5,
+          "Incandescent 2"
+        ],
+        [
+          6,
+          "Fluorescent (daylight)"
+        ],
+        [
+          7,
+          "Fluorescent (natural white)"
+        ],
+        [
+          8,
+          "Fluorescent (white)"
+        ],
+        [
+          9,
+          "Fluorescent (bulb colour)"
+        ],
+        [
+          10,
+          "Colour temperature"
+        ],
+        [
+          11,
+          "Colour temperature 2"
+        ],
+        [
+          12,
+          "Colour temperature 3"
+        ],
+        [
+          13,
+          "Manual"
+        ],
+        [
+          16,
+          "CTE"
+        ],
+        [
+          17,
+          "Multi Pattern Auto"
+        ]
+      ]
+    },
+    {
+      "encoding": {
+        "list": "sint8"
+      },
+      "name": "white_balance_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "fb673486-2a76-41b8-88f7-f88552fe5745",
+      "values": []
+    },
+    {
+      "encoding": "uint8",
+      "name": "file_type",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "95bfa8ca-4680-424d-b27c-aac20d86e48b",
+      "values": [
+        [
+          0,
+          "JPEG"
+        ],
+        [
+          1,
+          "PEF"
+        ],
+        [
+          2,
+          "DNG"
+        ],
+        [
+          3,
+          "JPEG + PEF"
+        ],
+        [
+          4,
+          "JPEG + DNG"
+        ]
+      ]
+    },
+    {
+      "encoding": {
+        "list": "sint8"
+      },
+      "name": "file_type_list",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "f3bfb222-c62b-4aaa-bb61-ef6486626cc8",
+      "values": []
+    },
+    {
+      "encoding": "sint8",
+      "name": "jpeg_size",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "9838bb04-4abb-4c12-ae22-626d02e3704b",
+      "values": [
+        [
+          0,
+          "L / Super Fine"
+        ],
+        [
+          1,
+          "M / Super Fine"
+        ],
+        [
+          2,
+          "S / Super Fine"
+        ],
+        [
+          3,
+          "XS / Super Fine"
+        ],
+        [
+          4,
+          "L / Fine"
+        ],
+        [
+          5,
+          "M / Fine"
+        ],
+        [
+          6,
+          "S / Fine"
+        ],
+        [
+          7,
+          "XS / Fine"
+        ],
+        [
+          8,
+          "L / Economy"
+        ],
+        [
+          9,
+          "M / Economy"
+        ],
+        [
+          10,
+          "S / Economy"
+        ],
+        [
+          11,
+          "XS / Economy"
+        ]
+      ]
+    },
+    {
+      "encoding": "sint8",
+      "name": "movie_configuration",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "404f6626-1294-407f-ab3d-ddc6b805b6bc",
+      "values": [
+        [
+          0,
+          "FullHD 60fps"
+        ],
+        [
+          1,
+          "FullHD 30fps"
+        ],
+        [
+          2,
+          "FullHD 24fps"
+        ],
+        [
+          3,
+          "4K 60fps"
+        ],
+        [
+          4,
+          "4K 30fps"
+        ],
+        [
+          5,
+          "4K 24fps"
+        ]
+      ]
+    },
+    {
+      "encoding": "opaque",
+      "name": "shooting_service_notification",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "671466a5-5535-412e-ac4f-8b2f06af2237",
+      "values": []
+    },
+    {
+      "encoding": "opaque",
+      "name": "high_frequency_shooting_service_notification",
+      "service": "9f00f387-8345-4bbc-8b92-b87b52e3091a",
+      "uuid": "2ac97991-a78b-4cd4-9ae8-6e030e1d9edb",
+      "values": []
+    }
+  ],
+  "firmware": "1.41",
+  "model": "RICOH GR IIIx"
+}
