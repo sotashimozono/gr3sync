@@ -1,5 +1,24 @@
 # gr3sync
 
+> ## ⚠️ THIS IS AN EXPERIMENTAL PROJECT
+>
+> It drives a camera over an interface RICOH does not document, using a
+> specification the community reverse-engineered — one already found wrong
+> twice, about the byte layouts of Battery Level and Storage Information, in
+> ways that failed quietly rather than loudly.
+>
+> Everything verified here was verified against **one body: a RICOH GR IIIx on
+> firmware 1.41**. On a GR III running 1.92 or 2.10, another project measured
+> the write this tool depends on being **rejected outright**. Whether that is
+> the model or the firmware is unresolved. Your camera may behave differently,
+> and nothing here has been tested across the range.
+>
+> gr3sync never deletes from the card, and the only camera state it writes is
+> power and WLAN settings. But it is not a finished product, it has never
+> completed a download from a real camera end to end, and it comes with no
+> warranty. See [Verification status](#verification-status) for exactly what has
+> and has not been done, and use it accordingly.
+
 Pull photos off a RICOH GR III without touching the camera.
 
 ```
