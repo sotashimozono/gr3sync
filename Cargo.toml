@@ -11,7 +11,7 @@ keywords = ["ricoh", "camera", "bluetooth", "ble", "photo"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-btleplug = "0.12"
+btleplug = "0.13"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
